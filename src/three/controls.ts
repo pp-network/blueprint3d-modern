@@ -40,7 +40,7 @@ export class Controls {
   public zoomSpeed = 1.0
   // Limits to how far you can dolly in and out
   public minDistance = 0
-  public maxDistance = 1500 //Infinity;
+  public maxDistance = 20000
 
   // Enable/disable wheel zoom (for controlling page scroll vs zoom behavior)
   public enableWheelZoom = true
@@ -120,12 +120,15 @@ export class Controls {
       this.onMouseDown.bind(this) as EventListener,
       false
     )
+    this.domElement.addEventListener('wheel', this.onMouseWheel.bind(this) as EventListener, {
+      passive: false
+    })
     this.domElement.addEventListener(
       'mousewheel',
       this.onMouseWheel.bind(this) as EventListener,
       false
     )
-    this.domElement.addEventListener('DOMMouseScroll', this.onMouseWheel.bind(this), false) // firefox
+    this.domElement.addEventListener('DOMMouseScroll', this.onMouseWheel.bind(this), false)
     this.domElement.addEventListener(
       'touchstart',
       this.touchstart.bind(this) as EventListener,
@@ -419,18 +422,17 @@ export class Controls {
     event.preventDefault()
 
     let delta = 0
-
-    if (event.wheelDelta) {
-      // WebKit / Opera / Explorer 9
+    if (typeof event.deltaY === 'number' && event.deltaY !== 0) {
+      delta = -event.deltaY
+    } else if (event.wheelDelta) {
       delta = event.wheelDelta
     } else if (event.detail) {
-      // Firefox
       delta = -event.detail
     }
 
     if (delta > 0) {
       this.dollyOut()
-    } else {
+    } else if (delta < 0) {
       this.dollyIn()
     }
     this.update()

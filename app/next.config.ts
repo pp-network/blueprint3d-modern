@@ -7,6 +7,14 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true
   },
 
+  // src/ lives one level above app/. Without this, Turbopack treats app/ as the
+  // workspace root and can fail to bundle the engine + three correctly.
+  turbopack: {
+    root: path.resolve(__dirname, '..')
+  },
+
+  serverExternalPackages: ['@cursor/sdk'],
+
   experimental: {
     optimizePackageImports: [
       'lucide-react',

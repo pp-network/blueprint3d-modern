@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Room } from '../model/room'
+import { loadTextureOrFallback, makeWoodFloorTexture } from './default-materials'
 
 export class Floor {
   public readonly room: Room
@@ -31,24 +32,18 @@ export class Floor {
 
   private buildFloor(): THREE.Mesh {
     const textureSettings = this.room.getTexture()
-    // setup texture
-    const textureLoader = new THREE.TextureLoader()
-    const floorTexture = textureLoader.load(textureSettings.url)
+    const floorTexture = loadTextureOrFallback(textureSettings.url, makeWoodFloorTexture)
     floorTexture.wrapS = THREE.RepeatWrapping
     floorTexture.wrapT = THREE.RepeatWrapping
-    floorTexture.repeat.set(1, 1)
-    floorTexture.colorSpace = THREE.SRGBColorSpace
-    // Apply anisotropic filtering for sharper textures at angles
     floorTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     floorTexture.minFilter = THREE.LinearMipmapLinearFilter
     floorTexture.magFilter = THREE.LinearFilter
     const floorMaterialTop = new THREE.MeshPhongMaterial({
       map: floorTexture,
       side: THREE.DoubleSide,
-      // ambient: 0xffffff, TODO_Ekki
-      color: 0xffffff, // Changed from 0xcccccc to 0xffffff for brighter floor
-      specular: 0x111111,  // Very subtle specular to avoid moiré
-      shininess: 3  // Very matte finish to reduce artifacts
+      color: 0xf0e2c8,
+      specular: 0x222222,
+      shininess: 8
     })
 
     const textureScale = textureSettings.scale

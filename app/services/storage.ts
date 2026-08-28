@@ -8,6 +8,7 @@ import type { BlueprintListItem, BlueprintDetail, BlueprintPayload } from '@/typ
 const DB_NAME = 'blueprint3d_floorplans'
 const STORE_NAME = 'floorplans'
 const DB_VERSION = 1
+const DRAFT_ID = 'local-autosave-draft'
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -48,7 +49,7 @@ async function list(options: ListOptions = {}): Promise<BlueprintListItem[]> {
     const request = store.getAll()
 
     request.onsuccess = () => {
-      let results: BlueprintDetail[] = request.result
+      let results: BlueprintDetail[] = request.result.filter((r) => r.id !== DRAFT_ID)
 
       // Filter by room type
       if (options.roomType && options.roomType !== 'all') {
@@ -160,4 +161,58 @@ async function remove(id: string): Promise<void> {
   })
 }
 
-export const blueprintStorage = { list, get, create, update, delete: remove }
+async function duplicate(id: string, name: string): Promise<BlueprintDetail> {
+  const existing = await get(id)
+  if (!existing) throw new Error(`Blueprint ${id} not found`)
+  return create({
+    name,
+    description: existing.description ?? undefined,
+    layoutData: existing.layoutData,
+    thumbnailBase64: existing.thumbnailUrl ?? undefined,
+    roomType: existing.roomType ?? undefined
+  })
+}
+
+async function saveDraft(payload: BlueprintPayload): Promise<BlueprintDetail> {
+  const existing = await get(DRAFT_ID)
+  if (existing) {
+    return update(DRAFT_ID, payload)
+  }
+  const db = await openDB()
+  const now = Math.floor(Date.now() / 1000)
+  const record: BlueprintDetail = {
+    id: DRAFT_ID,
+    name: payload.name,
+    description: payload.description ?? null,
+    thumbnailUrl: payload.thumbnailBase64 ?? null,
+    previewCleanUrl: payload.thumbnailBase64 ?? null,
+    roomType: payload.roomType ?? RoomType.BEDROOM,
+    layoutData: payload.layoutData,
+    layoutDataSimple: null,
+    createdAt: now,
+    updatedAt: now
+  }
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const store = tx.objectStore(STORE_NAME)
+    const request = store.put(record)
+    request.onsuccess = () => resolve(record)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function getDraft(): Promise<BlueprintDetail | null> {
+  return get(DRAFT_ID)
+}
+
+export const blueprintStorage = {
+  list,
+  get,
+  create,
+  update,
+  delete: remove,
+  duplicate,
+  saveDraft,
+  getDraft,
+  DRAFT_ID
+}

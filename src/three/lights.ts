@@ -20,13 +20,12 @@ export class Lights {
 
   private init(): void {
     // Increased intensity for Three.js r181 physically correct rendering
-    const light = new THREE.HemisphereLight(0xffffff, 0x888888, 3.0)
+    const light = new THREE.HemisphereLight(0xf4f1ea, 0xb8b0a4, 1.6)
     light.position.set(0, this.height, 0)
     this.scene.add(light)
 
-    // Fixed: Set intensity to 0.5 instead of 0 (was causing items to be invisible)
-    this.dirLight = new THREE.DirectionalLight(0xffffff, 0.5)
-    this.dirLight.color.setHSL(1, 1, 0.1)
+    this.dirLight = new THREE.DirectionalLight(0xfff4e5, 1.8)
+    this.dirLight.color.setHex(0xfff4e5)
 
     this.dirLight.castShadow = true
 

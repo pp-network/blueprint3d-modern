@@ -1,6 +1,6 @@
 'use client'
 
-import { Move, Pencil, Trash2, Check } from 'lucide-react'
+import { Move, Pencil, Trash2, Check, Undo2 } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useTranslations } from 'next-intl'
@@ -10,9 +10,11 @@ interface FloorplannerControlsProps {
   mode: 'move' | 'draw' | 'delete'
   onModeChange: (mode: 'move' | 'draw' | 'delete') => void
   onDone: () => void
+  onUndo?: () => void
+  canUndo?: boolean
 }
 
-export function FloorplannerControls({ mode, onModeChange, onDone }: FloorplannerControlsProps) {
+export function FloorplannerControls({ mode, onModeChange, onDone, onUndo, canUndo }: FloorplannerControlsProps) {
   const t = useTranslations('BluePrint.floorplanner')
   const isMobile = useIsMobile()
 
@@ -65,6 +67,21 @@ export function FloorplannerControls({ mode, onModeChange, onDone }: Floorplanne
           >
             <Trash2 className={cn(isMobile ? 'h-5 w-5' : 'h-4 w-4')} />
             {!isMobile && t('deleteWalls')}
+          </Button>
+          <Button
+            size={isMobile ? 'icon' : 'sm'}
+            variant="secondary"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className={cn(
+              !isMobile && 'flex items-center gap-2',
+              isMobile && 'h-11 w-11 shadow-lg active:scale-95 transition-transform'
+            )}
+            title={t('undoLast')}
+            aria-label={t('undoLast')}
+          >
+            <Undo2 className={cn(isMobile ? 'h-5 w-5' : 'h-4 w-4')} />
+            {!isMobile && t('undoLast')}
           </Button>
         </div>
 

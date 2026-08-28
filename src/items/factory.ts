@@ -3,7 +3,6 @@ import type { Model } from '../model/model'
 import type { Metadata } from './metadata'
 import * as THREE from 'three'
 import { CornerItem } from './corner_item'
-import { FloorItem } from './floor_item'
 import { InWallFloorItem } from './in_wall_floor_item'
 import { InWallItem } from './in_wall_item'
 import { OnFloorItem } from './on_floor_item'
@@ -23,7 +22,7 @@ type ItemConstructor = new (
 
 /** Enumeration of item types. */
 const item_types: Record<number, ItemConstructor> = {
-  1: FloorItem as any, // FloorItem is abstract
+  1: OnFloorItem,
   2: WallItem as any, // WallItem is abstract
   3: InWallItem,
   7: InWallFloorItem,

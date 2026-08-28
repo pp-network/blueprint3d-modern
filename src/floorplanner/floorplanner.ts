@@ -2,6 +2,18 @@ import { Floorplan } from '../model/floorplan'
 import { Wall } from '../model/wall'
 import { Corner } from '../model/corner'
 import { FloorplannerView, floorplannerModes } from './floorplanner_view'
+import { EventEmitter } from '../core/events'
+import type { Model } from '../model/model'
+import {
+  applyCalibration,
+  copyOverlayTransform,
+  createOverlay,
+  restoreOverlayTransform,
+  type FloorplanOverlay,
+  type OverlayTransform
+} from './overlay'
+import { applyWallTraceToModel } from '../vision/apply-trace'
+import type { WallTrace } from '../vision/types'
 
 type FloorplannerMode = (typeof floorplannerModes)[keyof typeof floorplannerModes]
 
@@ -35,6 +47,32 @@ export class Floorplanner {
 
   /** drawing state */
   public lastNode: Corner | null = null
+
+  /** Click-selected wall for thickness editing. */
+  public selectedWall: Wall | null = null
+
+  public overlay: FloorplanOverlay | null = null
+
+  public lastWallTrace: WallTrace | null = null
+
+  public overlayCalibrating = false
+
+  public overlayCalibratePoints: Array<{ x: number; y: number }> = []
+
+  public readonly wallSelectedCallbacks = new EventEmitter<Wall | null>()
+
+  public readonly overlayChanged = new EventEmitter<void>()
+
+  public readonly calibrateReady = new EventEmitter<{
+    p1: { x: number; y: number }
+    p2: { x: number; y: number }
+  }>()
+
+  public readonly calibrateChanged = new EventEmitter<{
+    calibrating: boolean
+    ready: boolean
+    points: number
+  }>()
 
   /** */
   // @ts-ignore - wallWidth is declared but not used, keeping for future use
@@ -73,11 +111,19 @@ export class Floorplanner {
   /** mouse position at last click */
   private lastY = 0
 
-  /** */
-  private cmPerPixel: number
+  private drawChain: Array<{ x: number; y: number }> = []
+
+  private drawRedo: Array<{ x: number; y: number }> = []
+
+  private overlayUndoBySnapshot = new Map<string, OverlayTransform>()
+
+  private pendingOverlayUndo: OverlayTransform | null = null
 
   /** */
-  private pixelsPerCm: number
+  public cmPerPixel: number
+
+  /** */
+  public pixelsPerCm: number
 
   /** Add a callback for mode reset */
   public addModeResetCallback(callback: (mode: FloorplannerMode) => void): void {
@@ -96,7 +142,8 @@ export class Floorplanner {
   /** */
   constructor(
     canvas: string,
-    private floorplan: Floorplan
+    private floorplan: Floorplan,
+    private model?: Model
   ) {
     this.canvasElement = document.getElementById(canvas) as HTMLCanvasElement
 
@@ -126,9 +173,20 @@ export class Floorplanner {
       this.mouseleave()
     })
 
-    document.addEventListener('keyup', (e: KeyboardEvent) => {
-      if (e.keyCode == 27) {
+    document.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || e.keyCode == 27) {
         this.escapeKey()
+        return
+      }
+      if (e.key !== 'Backspace') {
+        return
+      }
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      if (this.undoLastChange()) {
+        e.preventDefault()
       }
     })
 
@@ -170,13 +228,27 @@ export class Floorplanner {
     this.lastX = this.rawMouseX
     this.lastY = this.rawMouseY
 
+    if (this.overlayCalibrating) {
+      return
+    }
+
+    if (this.mode == floorplannerModes.MOVE) {
+      this.model?.beginHistory()
+    }
+
     // delete
     if (this.mode == floorplannerModes.DELETE) {
+      this.model?.beginHistory()
       if (this.activeCorner) {
         this.activeCorner.removeAll()
+        this.model?.commitHistory()
+        this.setSelectedWall(null)
       } else if (this.activeWall) {
         this.activeWall.remove()
+        this.model?.commitHistory()
+        this.setSelectedWall(null)
       } else {
+        this.model?.history.cancel()
         this.setMode(floorplannerModes.MOVE)
       }
     }
@@ -225,10 +297,16 @@ export class Floorplanner {
       }
     }
 
-    // panning
-    if (this.mouseDown && !this.activeCorner && !this.activeWall) {
-      this.originX += this.lastX - this.rawMouseX
-      this.originY += this.lastY - this.rawMouseY
+    // panning (view) or moving unlocked overlay
+    if (this.mouseDown && !this.activeCorner && !this.activeWall && !this.overlayCalibrating) {
+      if (this.overlay && !this.overlay.locked) {
+        this.overlay.originX += (this.rawMouseX - this.lastX) * this.cmPerPixel
+        this.overlay.originY += (this.rawMouseY - this.lastY) * this.cmPerPixel
+        this.overlayChanged.fire()
+      } else {
+        this.originX += this.lastX - this.rawMouseX
+        this.originY += this.lastY - this.rawMouseY
+      }
       this.lastX = this.rawMouseX
       this.lastY = this.rawMouseY
       this.view.draw()
@@ -256,16 +334,41 @@ export class Floorplanner {
   private mouseup(): void {
     this.mouseDown = false
 
+    if (this.overlayCalibrating && !this.mouseMoved) {
+      if (this.overlayCalibratePoints.length < 2) {
+        this.overlayCalibratePoints.push({ x: this.mouseX, y: this.mouseY })
+        this.view.draw()
+        this.emitCalibrateChanged()
+        if (this.overlayCalibratePoints.length >= 2) {
+          const [p1, p2] = this.overlayCalibratePoints
+          this.calibrateReady.fire({ p1, p2 })
+        }
+      }
+      return
+    }
+
+    if (this.mode == floorplannerModes.MOVE) {
+      this.model?.commitHistory()
+      if (!this.mouseMoved) {
+        this.setSelectedWall(this.activeWall)
+      }
+    }
+
     // drawing
     if (this.mode == floorplannerModes.DRAW && !this.mouseMoved) {
+      this.model?.beginHistory()
       const corner = this.floorplan.newCorner(this.targetX, this.targetY)
       if (this.lastNode != null) {
         this.floorplan.newWall(this.lastNode, corner)
       }
       if (corner.mergeWithIntersected() && this.lastNode != null) {
         this.setMode(floorplannerModes.MOVE)
+      } else {
+        this.lastNode = corner
+        this.drawChain.push({ x: corner.x, y: corner.y })
+        this.drawRedo = []
       }
-      this.lastNode = corner
+      this.model?.commitHistory()
     }
   }
 
@@ -291,6 +394,8 @@ export class Floorplanner {
   /** Sets the interaction mode */
   public setMode(mode: FloorplannerMode): void {
     this.lastNode = null
+    this.drawChain = []
+    this.drawRedo = []
     this.mode = mode
     this.modeResetCallbacks.forEach((callback) => callback(mode))
     this.updateTarget()
@@ -313,5 +418,235 @@ export class Floorplanner {
   /** Convert from THREEjs coords to canvas coords. */
   public convertY(y: number): number {
     return (y - this.originY * this.cmPerPixel) * this.pixelsPerCm
+  }
+
+  public setSelectedWall(wall: Wall | null): void {
+    if (this.selectedWall === wall) {
+      return
+    }
+    this.selectedWall = wall
+    this.wallSelectedCallbacks.fire(wall)
+    this.view.draw()
+  }
+
+  public setWallThickness(cm: number): void {
+    if (!this.selectedWall || cm <= 0) {
+      return
+    }
+    this.model?.beginHistory()
+    this.selectedWall.thickness = cm
+    this.floorplan.update()
+    this.model?.commitHistory()
+    this.view.draw()
+  }
+
+  public setOverlayImage(image: HTMLImageElement): void {
+    const center = this.floorplan.getCenter()
+    const cx = Number.isFinite(center.x) ? center.x : 0
+    const cz = Number.isFinite(center.z) ? center.z : 0
+    const canvasW = this.canvasElement.clientWidth || this.canvasElement.width || 1000
+    const targetWidthCm = Math.max(canvasW * this.cmPerPixel * 0.9, 1600)
+    this.overlay = createOverlay(image, cx, cz, targetWidthCm)
+    this.lastWallTrace = null
+    this.overlayCalibrating = false
+    this.overlayCalibratePoints = []
+    this.overlayUndoBySnapshot.clear()
+    this.pendingOverlayUndo = null
+    this.frameOnOverlay()
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public frameOnOverlay(): void {
+    if (!this.overlay) {
+      return
+    }
+    const widthCm = (this.overlay.image.naturalWidth || this.overlay.image.width) * this.overlay.cmPerImagePixel
+    const heightCm = (this.overlay.image.naturalHeight || this.overlay.image.height) * this.overlay.cmPerImagePixel
+    const cx = this.overlay.originX + widthCm / 2
+    const cy = this.overlay.originY + heightCm / 2
+    const centerX = (this.canvasElement.clientWidth || this.canvasElement.width) / 2
+    const centerY = (this.canvasElement.clientHeight || this.canvasElement.height) / 2
+    this.originX = cx * this.pixelsPerCm - centerX
+    this.originY = cy * this.pixelsPerCm - centerY
+    this.view.draw()
+  }
+
+  public clearOverlay(): void {
+    this.overlay = null
+    this.lastWallTrace = null
+    this.overlayCalibrating = false
+    this.overlayCalibratePoints = []
+    this.overlayUndoBySnapshot.clear()
+    this.pendingOverlayUndo = null
+    this.emitCalibrateChanged()
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public setOverlayOpacity(opacity: number): void {
+    if (!this.overlay) {
+      return
+    }
+    this.overlay.opacity = Math.min(1, Math.max(0, opacity))
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public setOverlayLocked(locked: boolean): void {
+    if (!this.overlay) {
+      return
+    }
+    this.overlay.locked = locked
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public startCalibration(): void {
+    if (!this.overlay) {
+      return
+    }
+    this.overlayCalibrating = true
+    this.overlayCalibratePoints = []
+    this.setMode(floorplannerModes.MOVE)
+    this.emitCalibrateChanged()
+    this.view.draw()
+  }
+
+  public applyOverlayCalibration(realLengthCm: number): void {
+    if (!this.overlay || this.overlayCalibratePoints.length < 2) {
+      return
+    }
+    const [p1, p2] = this.overlayCalibratePoints
+    const before = copyOverlayTransform(this.overlay)
+    applyCalibration(this.overlay, p1, p2, realLengthCm)
+    this.overlayCalibrating = false
+    this.overlayCalibratePoints = []
+    if (this.lastWallTrace && this.model) {
+      this.model.beginHistory()
+      applyWallTraceToModel(this.model, this.overlay, this.lastWallTrace, undefined, { seedHistory: false })
+      const changed = this.model.commitHistory()
+      if (changed && this.model.history.current) {
+        this.overlayUndoBySnapshot.set(this.model.history.current, before)
+        this.pendingOverlayUndo = null
+      } else {
+        this.pendingOverlayUndo = before
+      }
+    } else {
+      this.pendingOverlayUndo = before
+    }
+    this.emitCalibrateChanged()
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public cancelCalibration(): void {
+    this.overlayCalibrating = false
+    this.overlayCalibratePoints = []
+    this.emitCalibrateChanged()
+    this.view.draw()
+  }
+
+  public get canUndoLastChange(): boolean {
+    if (this.overlayCalibrating) {
+      return this.overlayCalibratePoints.length > 0
+    }
+    if (this.pendingOverlayUndo) {
+      return true
+    }
+    const current = this.model?.history.current
+    if (current && this.overlayUndoBySnapshot.has(current)) {
+      return true
+    }
+    return Boolean(this.model?.history.canUndo)
+  }
+
+  public undoLastChange(): boolean {
+    if (this.overlayCalibrating) {
+      if (this.overlayCalibratePoints.length === 0) {
+        return false
+      }
+      this.overlayCalibratePoints.pop()
+      this.emitCalibrateChanged()
+      this.view.draw()
+      return true
+    }
+
+    const current = this.model?.history.current
+    const paired = current ? this.overlayUndoBySnapshot.get(current) : undefined
+    if (paired && this.overlay) {
+      this.overlayUndoBySnapshot.delete(current!)
+      restoreOverlayTransform(this.overlay, paired)
+      this.model?.undo()
+      this.syncDrawNodeAfterUndo()
+      this.overlayChanged.fire()
+      this.view.draw()
+      return true
+    }
+
+    if (this.model?.history.canUndo) {
+      this.model.undo()
+      this.syncDrawNodeAfterUndo()
+      this.view.draw()
+      return true
+    }
+
+    if (this.pendingOverlayUndo && this.overlay) {
+      restoreOverlayTransform(this.overlay, this.pendingOverlayUndo)
+      this.pendingOverlayUndo = null
+      this.overlayChanged.fire()
+      this.view.draw()
+      return true
+    }
+
+    return false
+  }
+
+  public redoLastChange(): boolean {
+    if (!this.model?.history.canRedo) {
+      return false
+    }
+    this.model.redo()
+    if (this.mode === floorplannerModes.DRAW && this.drawRedo.length > 0) {
+      const point = this.drawRedo.pop()!
+      this.drawChain.push(point)
+      this.lastNode = this.findCornerNear(point)
+    }
+    this.view.draw()
+    return true
+  }
+
+  private emitCalibrateChanged(): void {
+    this.calibrateChanged.fire({
+      calibrating: this.overlayCalibrating,
+      ready: this.overlayCalibratePoints.length >= 2,
+      points: this.overlayCalibratePoints.length
+    })
+  }
+
+  private syncDrawNodeAfterUndo(): void {
+    if (this.mode !== floorplannerModes.DRAW) {
+      this.lastNode = null
+      return
+    }
+    const undone = this.drawChain.pop()
+    if (undone) {
+      this.drawRedo.push(undone)
+    }
+    const prev = this.drawChain[this.drawChain.length - 1]
+    this.lastNode = prev ? this.findCornerNear(prev) : null
+  }
+
+  private findCornerNear(point: { x: number; y: number }): Corner | null {
+    let best: Corner | null = null
+    let bestDist = 1
+    for (const corner of this.floorplan.getCorners()) {
+      const dist = Math.hypot(corner.x - point.x, corner.y - point.y)
+      if (dist < bestDist) {
+        best = corner
+        bestDist = dist
+      }
+    }
+    return best
   }
 }

@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { Model } from '../model/model'
+import type { Model } from '../model/model'
 import { FloorItem } from './floor_item'
 import { Metadata } from './metadata'
 

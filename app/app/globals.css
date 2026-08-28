@@ -16,7 +16,8 @@
 }
 
 @theme {
-  --font-global: var(--font-inter);
+  --font-global: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
 
   --color-primary: hsl(var(--primary));
   --color-primary-50: color-mix(in srgb, hsl(var(--primary)) 8%, white);
@@ -329,7 +330,7 @@
 }
 
 #loading-modal {
-  @apply absolute z-10 left-0 top-0 w-full h-full flex items-center justify-center;
+  @apply absolute z-10 left-0 top-0 w-full h-full flex items-center justify-center pointer-events-none;
   background-color: rgba(255, 255, 255, 0.3);
   backdrop-filter: blur(2px);
   animation: fadeInBackdrop 0.2s ease-out;

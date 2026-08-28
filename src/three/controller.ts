@@ -29,6 +29,7 @@ export class Controller {
   private readonly hud: HUD
 
   private plane!: THREE.Mesh // ground plane used for intersection testing
+  private readonly floorHit = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
   private mouse!: THREE.Vector2
   private intersectedObject: Item | null = null
   private mouseoverObject: Item | null = null
@@ -66,15 +67,27 @@ export class Controller {
 
   private init(): void {
     // Mouse events
-    this.element.addEventListener('mousedown', this.mouseDownEvent.bind(this))
-    this.element.addEventListener('mouseup', this.mouseUpEvent.bind(this))
-    this.element.addEventListener('mousemove', this.mouseMoveEvent.bind(this))
+    this.element.addEventListener('mousedown', this.mouseDownEvent.bind(this), true)
+    this.element.addEventListener('mouseup', this.mouseUpEvent.bind(this), true)
+    this.element.addEventListener('mousemove', this.mouseMoveEvent.bind(this), true)
 
     // Touch events
-    this.element.addEventListener('touchstart', this.touchStartEvent.bind(this), { passive: false })
-    this.element.addEventListener('touchmove', this.touchMoveEvent.bind(this), { passive: false })
-    this.element.addEventListener('touchend', this.touchEndEvent.bind(this), { passive: false })
-    this.element.addEventListener('touchcancel', this.touchCancelEvent.bind(this), { passive: false })
+    this.element.addEventListener('touchstart', this.touchStartEvent.bind(this), {
+      passive: false,
+      capture: true
+    })
+    this.element.addEventListener('touchmove', this.touchMoveEvent.bind(this), {
+      passive: false,
+      capture: true
+    })
+    this.element.addEventListener('touchend', this.touchEndEvent.bind(this), {
+      passive: false,
+      capture: true
+    })
+    this.element.addEventListener('touchcancel', this.touchCancelEvent.bind(this), {
+      passive: false,
+      capture: true
+    })
 
     this.mouse = new THREE.Vector2()
 
@@ -123,7 +136,7 @@ export class Controller {
 
   private setGroundPlane(): void {
     // ground plane used to find intersections
-    const size = 10000
+    const size = 100000
     this.plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size), new THREE.MeshBasicMaterial())
     this.plane.rotation.x = -Math.PI / 2
     this.plane.visible = false
@@ -160,11 +173,7 @@ export class Controller {
       event.preventDefault()
 
       this.mouseMoved = true
-
-      // Get element's bounding rect dynamically for accurate positioning
-      const rect = this.element.getBoundingClientRect()
-      this.mouse.x = event.clientX - rect.left
-      this.mouse.y = event.clientY - rect.top
+      this.setMouseFromEvent(event)
 
       if (!this.mouseDown) {
         this.updateIntersections()
@@ -198,23 +207,35 @@ export class Controller {
 
       this.mouseMoved = false
       this.mouseDown = true
+      this.setMouseFromEvent(event)
+      this.updateIntersections()
 
       switch (this.state) {
         case ControllerState.SELECTED:
           if (this.rotateMouseOver) {
+            this.model.beginHistory()
             this.switchState(ControllerState.ROTATING)
+            event.stopImmediatePropagation()
           } else if (this.intersectedObject !== null) {
             this.setSelectedObject(this.intersectedObject)
             if (!this.intersectedObject.fixed) {
+              this.model.beginHistory()
               this.switchState(ControllerState.DRAGGING)
+              event.stopImmediatePropagation()
             }
+          } else if (this.selectedObject && !this.selectedObject.fixed) {
+            this.model.beginHistory()
+            this.switchState(ControllerState.DRAGGING)
+            event.stopImmediatePropagation()
           }
           break
         case ControllerState.UNSELECTED:
           if (this.intersectedObject !== null) {
             this.setSelectedObject(this.intersectedObject)
             if (!this.intersectedObject.fixed) {
+              this.model.beginHistory()
               this.switchState(ControllerState.DRAGGING)
+              event.stopImmediatePropagation()
             }
           }
           break
@@ -237,12 +258,14 @@ export class Controller {
           if (this.selectedObject) {
             this.selectedObject.clickReleased()
           }
+          this.model.commitHistory()
           this.switchState(ControllerState.SELECTED)
           break
         case ControllerState.ROTATING:
           if (!this.mouseMoved) {
             this.switchState(ControllerState.ROTATING_FREE)
           } else {
+            this.model.commitHistory()
             this.switchState(ControllerState.SELECTED)
           }
           break
@@ -339,22 +362,35 @@ export class Controller {
       this.mouse,
       items as any as THREE.Object3D[],
       false,
+      true,
       true
     )
 
     if (intersects.length > 0) {
-      this.intersectedObject = intersects[0].object as unknown as Item
+      this.intersectedObject = this.itemFromObject(intersects[0].object)
     } else {
       this.intersectedObject = null
     }
   }
 
+  private pointerEl(): HTMLElement {
+    return (this.element.querySelector('canvas') as HTMLElement) || this.element
+  }
+
+  private setMouseFromEvent(event: MouseEvent): void {
+    const rect = this.pointerEl().getBoundingClientRect()
+    this.mouse.x = event.clientX - rect.left
+    this.mouse.y = event.clientY - rect.top
+  }
+
   // sets coords to -1 to 1
   private normalizeVector2(vec2: THREE.Vector2): THREE.Vector2 {
+    const el = this.pointerEl()
+    const width = el.clientWidth || this.three.elementWidth
+    const height = el.clientHeight || this.three.elementHeight
     const retVec = new THREE.Vector2()
-    // vec2 now contains coordinates relative to the element (0 to elementWidth/Height)
-    retVec.x = (vec2.x / this.three.elementWidth) * 2 - 1
-    retVec.y = -(vec2.y / this.three.elementHeight) * 2 + 1
+    retVec.x = (vec2.x / Math.max(1, width)) * 2 - 1
+    retVec.y = -(vec2.y / Math.max(1, height)) * 2 + 1
     return retVec
   }
 
@@ -365,20 +401,38 @@ export class Controller {
     return vector
   }
 
+  private rayFromMouse(vec2: THREE.Vector2): THREE.Raycaster {
+    const ndc = this.normalizeVector2(vec2)
+    const raycaster = new THREE.Raycaster()
+    raycaster.setFromCamera(ndc, this.camera as THREE.PerspectiveCamera)
+    return raycaster
+  }
+
+  private itemFromObject(object: THREE.Object3D): Item | null {
+    const items = this.model.scene.getItems()
+    let current: THREE.Object3D | null = object
+    while (current) {
+      if (items.includes(current as Item)) {
+        return current as Item
+      }
+      current = current.parent
+    }
+    return null
+  }
+
   // returns the first intersection object
   public itemIntersection(vec2: THREE.Vector2, item: Item): THREE.Intersection | null {
     const customIntersections = item.customIntersectionPlanes()
-    let intersections: THREE.Intersection[]
     if (customIntersections && customIntersections.length > 0) {
-      intersections = this.getIntersections(vec2, customIntersections, true)
-    } else {
-      intersections = this.getIntersections(vec2, this.plane)
+      const intersections = this.getIntersections(vec2, customIntersections, true)
+      return intersections[0] ?? null
     }
-    if (intersections.length > 0) {
-      return intersections[0]
-    } else {
-      return null
+    const raycaster = this.rayFromMouse(vec2)
+    const hit = new THREE.Vector3()
+    if (raycaster.ray.intersectPlane(this.floorHit, hit)) {
+      return { point: hit, object: this.plane } as THREE.Intersection
     }
+    return null
   }
 
   // filter by normals will only return objects facing the camera
@@ -391,16 +445,15 @@ export class Controller {
     recursive?: boolean,
     linePrecision?: number
   ): THREE.Intersection[] {
-    const vector = this.mouseToVec3(vec2)
-
     const _onlyVisible = onlyVisible ?? false
     const _filterByNormals = filterByNormals ?? false
     const _recursive = recursive ?? false
     const _linePrecision = linePrecision ?? 20
 
-    const direction = vector.sub(this.camera.position).normalize()
-    const raycaster = new THREE.Raycaster(this.camera.position, direction)
-    raycaster.params.Line.threshold = _linePrecision
+    const raycaster = this.rayFromMouse(vec2)
+    if (raycaster.params.Line) {
+      raycaster.params.Line.threshold = _linePrecision
+    }
 
     let intersections: THREE.Intersection[]
     if (objects instanceof Array) {
@@ -430,7 +483,7 @@ export class Controller {
         }
 
         if (normal) {
-          const dot = normal.dot(direction)
+          const dot = normal.dot(raycaster.ray.direction)
           return dot > 0
         }
         return false
@@ -490,7 +543,7 @@ export class Controller {
    * Get touch position relative to element
    */
   private getTouchPosition(touch: Touch): THREE.Vector2 {
-    const rect = this.element.getBoundingClientRect()
+    const rect = this.pointerEl().getBoundingClientRect()
     return new THREE.Vector2(touch.clientX - rect.left, touch.clientY - rect.top)
   }
 
@@ -524,34 +577,38 @@ export class Controller {
         case ControllerState.SELECTED:
           if (this.rotateMouseOver) {
             this.switchState(ControllerState.ROTATING)
-            // Prevent camera controls when rotating object
             event.preventDefault()
-            event.stopPropagation()
+            event.stopImmediatePropagation()
           } else if (this.intersectedObject !== null) {
             this.setSelectedObject(this.intersectedObject)
             if (!this.intersectedObject.fixed) {
+              this.model.beginHistory()
               this.switchState(ControllerState.DRAGGING)
-              // Prevent camera controls when dragging object
               event.preventDefault()
-              event.stopPropagation()
+              event.stopImmediatePropagation()
             }
+          } else if (this.selectedObject && !this.selectedObject.fixed) {
+            this.model.beginHistory()
+            this.switchState(ControllerState.DRAGGING)
+            event.preventDefault()
+            event.stopImmediatePropagation()
           }
           break
         case ControllerState.UNSELECTED:
           if (this.intersectedObject !== null) {
             this.setSelectedObject(this.intersectedObject)
             if (!this.intersectedObject.fixed) {
+              this.model.beginHistory()
               this.switchState(ControllerState.DRAGGING)
-              // Prevent camera controls when dragging object
               event.preventDefault()
-              event.stopPropagation()
+              event.stopImmediatePropagation()
             }
           }
           break
         case ControllerState.DRAGGING:
         case ControllerState.ROTATING:
           event.preventDefault()
-          event.stopPropagation()
+          event.stopImmediatePropagation()
           break
         case ControllerState.ROTATING_FREE:
           this.switchState(ControllerState.SELECTED)
@@ -656,6 +713,7 @@ export class Controller {
           if (this.selectedObject) {
             this.selectedObject.clickReleased()
           }
+          this.model.commitHistory()
           this.switchState(ControllerState.SELECTED)
           event.preventDefault()
           break
@@ -663,6 +721,7 @@ export class Controller {
           if (!this.mouseMoved) {
             this.switchState(ControllerState.ROTATING_FREE)
           } else {
+            this.model.commitHistory()
             this.switchState(ControllerState.SELECTED)
           }
           event.preventDefault()

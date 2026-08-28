@@ -268,17 +268,15 @@ export class Utils {
     startX?: number,
     startY?: number
   ): boolean {
-    startX = startX || 0
-    startY = startY || 0
-
-    //ensure that point(startX, startY) is outside the polygon consists of corners
-    let tMinX = 0,
-      tMinY = 0
-
+    // Ray origin must be outside the polygon. The original `startX || 0`
+    // made (0,0) the default — that only works when the floorplan sits in
+    // the first quadrant. AI-imported plans are centered on the origin.
     if (startX === undefined || startY === undefined) {
+      let tMinX = Infinity
+      let tMinY = Infinity
       for (let tI = 0; tI < corners.length; tI++) {
         tMinX = Math.min(tMinX, corners[tI].x)
-        tMinY = Math.min(tMinX, corners[tI].y)
+        tMinY = Math.min(tMinY, corners[tI].y)
       }
       startX = tMinX - 10
       startY = tMinY - 10
@@ -320,9 +318,6 @@ export class Utils {
     startX?: number,
     startY?: number
   ): boolean {
-    startX = startX || 0
-    startY = startY || 0
-
     for (let tI = 0; tI < insideCorners.length; tI++) {
       if (
         !Utils.pointInPolygon(
@@ -346,9 +341,6 @@ export class Utils {
     startX?: number,
     startY?: number
   ): boolean {
-    startX = startX || 0
-    startY = startY || 0
-
     for (let tI = 0; tI < insideCorners.length; tI++) {
       if (
         Utils.pointInPolygon(

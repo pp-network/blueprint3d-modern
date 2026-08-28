@@ -1,7 +1,6 @@
 import * as THREE from 'three'
 import { Utils } from '../core/utils'
 import { EventEmitter } from '../core/events'
-import { Factory } from '../items/factory'
 import type { Item } from '../items/item'
 import type { Model } from './model'
 import { JSONLoader } from '../loaders/JSONLoader'
@@ -16,6 +15,9 @@ export class Scene {
 
   /** */
   private items: Item[] = []
+
+  /** Next spawn slot for items placed without a saved position. */
+  private placementSerial = 0
 
   /** */
   public needsUpdate = false
@@ -138,8 +140,9 @@ export class Scene {
     fixed?: boolean
   ): void {
     itemType = itemType || 1
+    const placementIndex = this.placementSerial++
     const scope = this
-    const loaderCallback = (geometry: THREE.BufferGeometry, materials: THREE.Material[]) => {
+    const loaderCallback = async (geometry: THREE.BufferGeometry, materials: THREE.Material[]) => {
 
       // Ensure materials are properly configured for visibility
       materials.forEach((mat) => {
@@ -150,7 +153,10 @@ export class Scene {
         mat.depthWrite = true
       })
 
-      // Custom JSONLoader already returns BufferGeometry
+      // Lazy import: Factory pulls in every item class (which extends THREE.Mesh).
+      // A static import here creates model → scene → factory → item → model
+      // and can leave Mesh/Item undefined during module init.
+      const { Factory } = await import('../items/factory')
       const item = new (Factory.getClass(itemType))(
         scope.model,
         metadata,
@@ -161,6 +167,7 @@ export class Scene {
         scale
       )
       item.fixed = fixed || false
+      item.placementIndex = placementIndex
       scope.items.push(item)
       scope.add(item)
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { Utils } from '../core/utils'
 import { Configuration, configSnapToWallDistance } from '../core/configuration'
-import { Model } from '../model/model'
+import type { Model } from '../model/model'
 import { HalfEdge } from '../model/half_edge'
 import { Item } from './item'
 import { Metadata } from './metadata'
@@ -28,11 +28,54 @@ export abstract class FloorItem extends Item {
   /** */
   public placeInRoom() {
     if (!this.position_set) {
-      const center = this.model.floorplan.getCenter()
-      this.position.x = center.x
-      this.position.z = center.z
+      const origin = this.placementOrigin()
+      this.position.x = origin.x + (this.placementIndex % 4) * 80
+      this.position.z = origin.z + Math.floor(this.placementIndex / 4) * 80
       this.position.y = 0.5 * (this.geometry.boundingBox!.max.y - this.geometry.boundingBox!.min.y)
+    } else {
+      this.separateIfStacked()
     }
+  }
+
+  private separateIfStacked(): void {
+    const others = this.model.scene.getItems().filter((item) => item !== this)
+    const overlapCount = others.filter((item) => {
+      const dx = item.position.x - this.position.x
+      const dz = item.position.z - this.position.z
+      return dx * dx + dz * dz < 15 * 15
+    }).length
+    if (overlapCount === 0) return
+    this.position.x += (overlapCount % 4) * 80
+    this.position.z += Math.floor(overlapCount / 4) * 80
+  }
+
+  private placementOrigin(): { x: number; z: number } {
+    const rooms = this.model.floorplan.getRooms()
+    let best = { x: this.model.floorplan.getCenter().x, z: this.model.floorplan.getCenter().z }
+    let bestArea = -1
+    for (const room of rooms) {
+      const corners = room.interiorCorners
+      if (corners.length < 3) continue
+      let area = 0
+      let cx = 0
+      let cy = 0
+      for (let i = 0; i < corners.length; i++) {
+        const a = corners[i]
+        const b = corners[(i + 1) % corners.length]
+        const cross = a.x * b.y - b.x * a.y
+        area += cross
+        cx += (a.x + b.x) * cross
+        cy += (a.y + b.y) * cross
+      }
+      const absArea = Math.abs(area) / 2
+      if (absArea > bestArea) {
+        bestArea = absArea
+        if (area !== 0) {
+          best = { x: cx / (3 * area), z: cy / (3 * area) }
+        }
+      }
+    }
+    return best
   }
 
   /** Take action after a resize */
@@ -112,41 +155,25 @@ export abstract class FloorItem extends Item {
 
   /** */
   public isValidPosition(vec3: THREE.Vector3): boolean {
-    const corners = this.getCorners('x', 'z', vec3)
-
-    // check if we are in a room
     const rooms = this.model.floorplan.getRooms()
-    let isInARoom = false
     for (let i = 0; i < rooms.length; i++) {
       if (
-        Utils.pointInPolygon(vec3.x, vec3.z, rooms[i].interiorCorners) &&
-        !Utils.polygonPolygonIntersect(corners, rooms[i].interiorCorners)
+        rooms[i].interiorCorners.length >= 3 &&
+        Utils.pointInPolygon(vec3.x, vec3.z, rooms[i].interiorCorners)
       ) {
-        isInARoom = true
+        return true
       }
     }
-    if (!isInARoom) {
-      //console.log('object not in a room');
-      return false
+    if (rooms.length === 0) {
+      return true
     }
-
-    // check if we are outside all other objects
-    /*
-      if (this.obstructFloorMoves) {
-          var objects = this.model.items.getItems();
-          for (var i = 0; i < objects.length; i++) {
-              if (objects[i] === this || !objects[i].obstructFloorMoves) {
-                  continue;
-              }
-              if (!utils.polygonOutsidePolygon(corners, objects[i].getCorners('x', 'z')) ||
-                  utils.polygonPolygonIntersect(corners, objects[i].getCorners('x', 'z'))) {
-                  //console.log('object not outside other objects');
-                  return false;
-              }
-          }
-      }*/
-
-    return true
+    const center = this.model.floorplan.getCenter()
+    const size = this.model.floorplan.getSize()
+    const pad = 120
+    return (
+      Math.abs(vec3.x - center.x) <= size.x / 2 + pad &&
+      Math.abs(vec3.z - center.z) <= size.z / 2 + pad
+    )
   }
 
   /** Find the closest wall edge and its distance from a given position.

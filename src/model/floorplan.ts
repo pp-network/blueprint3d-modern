@@ -5,6 +5,7 @@ import { Wall } from './wall'
 import { Corner } from './corner'
 import { Room } from './room'
 import { HalfEdge } from './half_edge'
+import { findDoorGapPairs, type DoorGapCorner } from './door-gaps'
 
 export type FloorTexture = { url: string; scale: number }
 export type WallTexture = { url: string; stretch: boolean; scale: number }
@@ -15,6 +16,8 @@ export interface SavedFloorplan {
     corner2: string
     frontTexture?: WallTexture
     backTexture?: WallTexture
+    thickness?: number
+    opening?: boolean
   }>
   wallTextures?: unknown[]
   floorTextures?: Record<string, FloorTexture>
@@ -125,15 +128,24 @@ export class Floorplan {
    * @param end he end corner.
    * @returns The new wall.
    */
-  public newWall(start: Corner, end: Corner): Wall {
+  public newWall(
+    start: Corner,
+    end: Corner,
+    options?: { skipUpdate?: boolean; opening?: boolean }
+  ): Wall {
     const wall = new Wall(start, end)
+    if (options?.opening) {
+      wall.opening = true
+    }
     this.walls.push(wall)
     const scope = this
     wall.fireOnDelete(() => {
       scope.removeWall(wall)
     })
     this.new_wall_callbacks.fire(wall)
-    this.update()
+    if (!options?.skipUpdate) {
+      this.update()
+    }
     return wall
   }
 
@@ -197,6 +209,7 @@ export class Floorplan {
   public overlappedWall(x: number, y: number, tolerance?: number): Wall | null {
     tolerance = tolerance || defaultFloorPlanTolerance
     for (let i = 0; i < this.walls.length; i++) {
+      if (this.walls[i].opening) continue
       if (this.walls[i].distanceFrom(x, y) < tolerance) {
         return this.walls[i]
       }
@@ -227,7 +240,9 @@ export class Floorplan {
         corner1: wall.getStart().id,
         corner2: wall.getEnd().id,
         frontTexture: wall.frontTexture,
-        backTexture: wall.backTexture
+        backTexture: wall.backTexture,
+        thickness: wall.thickness,
+        ...(wall.opening ? { opening: true } : {})
       })
     })
     floorplan.newFloorTextures = this.floorTextures
@@ -247,12 +262,18 @@ export class Floorplan {
     }
     const scope = this
     floorplan.walls.forEach((wall) => {
-      const newWall = scope.newWall(corners[wall.corner1], corners[wall.corner2])
+      const newWall = scope.newWall(corners[wall.corner1], corners[wall.corner2], {
+        skipUpdate: true,
+        opening: Boolean(wall.opening)
+      })
       if (wall.frontTexture) {
         newWall.frontTexture = wall.frontTexture
       }
       if (wall.backTexture) {
         newWall.backTexture = wall.backTexture
+      }
+      if (typeof wall.thickness === 'number' && wall.thickness > 0) {
+        newWall.thickness = wall.thickness
       }
     })
 
@@ -303,10 +324,32 @@ export class Floorplan {
     this.walls = []
   }
 
+  /** Connect collinear door jambs so rooms can form without drawing a solid wall. */
+  private closeDoorGaps(): void {
+    const input: DoorGapCorner[] = this.corners.map((corner) => {
+      const neighbors = corner.adjacentCorners()
+      const neighbor = neighbors.length === 1 ? neighbors[0] : null
+      return {
+        id: corner.id,
+        x: corner.x,
+        y: corner.y,
+        neighbor: neighbor ? { x: neighbor.x, y: neighbor.y } : null
+      }
+    })
+    const byId = new Map(this.corners.map((corner) => [corner.id, corner]))
+    for (const [aId, bId] of findDoorGapPairs(input)) {
+      const a = byId.get(aId)
+      const b = byId.get(bId)
+      if (!a || !b || a.wallToOrFrom(b)) continue
+      this.newWall(a, b, { skipUpdate: true, opening: true })
+    }
+  }
+
   /**
    * Update rooms
    */
   public update(): void {
+    this.closeDoorGaps()
     this.walls.forEach((wall) => {
       wall.resetFrontBack()
     })

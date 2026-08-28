@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Trash2, FolderOpen, Grid3x3, List, MoreVertical, Pencil } from 'lucide-react'
+import { Trash2, FolderOpen, Grid3x3, List, MoreVertical, Pencil, Copy } from 'lucide-react'
 import { toast } from 'sonner'
 import { blueprintStorage } from '@/services/storage'
 import type { BlueprintListItem } from '@/types/blueprint'
@@ -70,6 +70,18 @@ export function MyFloorplans({ onLoadFloorplan }: MyFloorplansProps) {
     } catch (error) {
       console.error('Failed to load floorplan:', error)
       toast.error(t('loadError'), { id: toastId })
+    }
+  }
+
+  const handleDuplicate = async (id: string, name: string) => {
+    const toastId = toast.loading(t('duplicatingItem', { name }))
+    try {
+      await blueprintStorage.duplicate(id, t('copySuffix', { name }))
+      await loadFloorplans()
+      toast.success(t('duplicateSuccess', { name }), { id: toastId })
+    } catch (error) {
+      console.error('Failed to duplicate floorplan:', error)
+      toast.error(t('duplicateError'), { id: toastId })
     }
   }
 
@@ -203,6 +215,16 @@ export function MyFloorplans({ onLoadFloorplan }: MyFloorplansProps) {
                     <DropdownMenuItem
                       onClick={(e) => {
                         e.stopPropagation()
+                        handleDuplicate(floorplan.id, floorplan.name)
+                      }}
+                      className="cursor-pointer"
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      {t('duplicateButton')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={(e) => {
+                        e.stopPropagation()
                         handleDelete(floorplan.id, floorplan.name)
                       }}
                       className="cursor-pointer text-destructive focus:text-destructive"
@@ -308,6 +330,16 @@ export function MyFloorplans({ onLoadFloorplan }: MyFloorplansProps) {
                   >
                     <Pencil className="h-4 w-4 mr-2" />
                     {t('editButton') || 'Edit'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation()
+                      handleDuplicate(floorplan.id, floorplan.name)
+                    }}
+                    className="cursor-pointer"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    {t('duplicateButton')}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={(e: React.MouseEvent) => {

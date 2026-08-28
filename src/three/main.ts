@@ -88,7 +88,7 @@ export class Main {
 
   private init(): void {
     this.domElement = this.element // Container
-    this.camera = new THREE.PerspectiveCamera(45, 1, 1, 10000)
+    this.camera = new THREE.PerspectiveCamera(45, 1, 1, 100000)
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
       preserveDrawingBuffer: true // required to support .toDataURL()
@@ -98,6 +98,8 @@ export class Main {
     this.renderer.shadowMap.type = THREE.PCFShadowMap // Optimized: PCFShadowMap is faster than PCFSoftShadowMap
     // Fix color space for proper color saturation (matching legacy behavior)
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
+    this.renderer.setClearColor(0xd8d2c8, 1)
+    this.scene.getScene().background = new THREE.Color(0xd8d2c8)
 
     // Get skybox colors from CSS variables (if available)
     const { topColor, bottomColor } = this.getSkyboxColors()
@@ -117,7 +119,12 @@ export class Main {
       this.hud
     )
 
-    this.domElement.appendChild(this.renderer.domElement)
+    const canvas = this.renderer.domElement
+    canvas.style.display = 'block'
+    canvas.style.position = 'absolute'
+    canvas.style.inset = '0'
+    canvas.style.zIndex = '1'
+    this.domElement.appendChild(canvas)
 
     // handle window resizing
     this.updateWindowSize()
@@ -126,8 +133,11 @@ export class Main {
     }
 
     // setup camera nicely
+    this.fitZoomLimits()
     this.centerCamera()
-    this.model.floorplan.fireOnUpdatedRooms(this.centerCamera.bind(this))
+    this.model.floorplan.fireOnUpdatedRooms(() => {
+      this.fitZoomLimits()
+    })
 
     // @ts-ignore - Item is imported but not used, keeping for future use
     const lights = new Lights(this.scene.getScene(), this.model.floorplan)
@@ -269,6 +279,11 @@ export class Main {
     return this.controller
   }
 
+  public refreshHud(): void {
+    this.hud.update()
+    this._needsUpdate = true
+  }
+
   public getCamera(): THREE.PerspectiveCamera {
     return this.camera
   }
@@ -320,11 +335,10 @@ export class Main {
     this.heightMargin = rect.top
     this.widthMargin = rect.left
 
-    this.elementWidth = this.element.clientWidth
-    if (this.options.resize) {
-      this.elementHeight = window.innerHeight - this.heightMargin
-    } else {
-      this.elementHeight = this.element.clientHeight
+    this.elementWidth = Math.max(1, this.element.clientWidth || rect.width)
+    this.elementHeight = Math.max(1, this.element.clientHeight || rect.height)
+    if (this.elementHeight < 2 && this.options.resize) {
+      this.elementHeight = Math.max(1, window.innerHeight - this.heightMargin)
     }
 
     this.camera.aspect = this.elementWidth / this.elementHeight
@@ -332,6 +346,25 @@ export class Main {
 
     this.renderer.setSize(this.elementWidth, this.elementHeight)
     this._needsUpdate = true
+  }
+
+  public zoomIn(): void {
+    this.controls.dollyOut()
+    this.controls.update()
+    this._needsUpdate = true
+  }
+
+  public zoomOut(): void {
+    this.controls.dollyIn()
+    this.controls.update()
+    this._needsUpdate = true
+  }
+
+  public fitZoomLimits(): void {
+    const size = this.model.floorplan.getSize()
+    const span = Math.max(size.x, size.z, 400)
+    this.controls.minDistance = Math.max(60, span * 0.08)
+    this.controls.maxDistance = Math.max(8000, span * 6)
   }
 
   public centerCamera(): void {

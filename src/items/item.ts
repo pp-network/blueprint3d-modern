@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { Utils } from '../core/utils'
-import { Model } from '../model/model'
-import { Scene } from '../model/scene'
+import type { Model } from '../model/model'
+import type { Scene } from '../model/scene'
 import { Metadata } from './metadata'
 
 /**
@@ -43,6 +43,9 @@ export abstract class Item extends THREE.Mesh {
 
   /** */
   public position_set: boolean
+
+  /** Assigned when the item is queued to load, so concurrent catalog adds don't stack. */
+  public placementIndex = 0
 
   /** Show rotate option in context menu */
   public allowRotate = true
@@ -226,7 +229,7 @@ export abstract class Item extends THREE.Mesh {
   /** */
   public clickDragged(intersection: THREE.Intersection | null): void {
     if (intersection) {
-      this.moveToPosition(intersection.point.sub(this.dragOffset), intersection)
+      this.moveToPosition(intersection.point.clone().sub(this.dragOffset), intersection)
     }
   }
 

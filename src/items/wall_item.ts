@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { Utils } from '../core/utils'
 import { HalfEdge } from '../model/half_edge'
-import { Model } from '../model/model'
+import type { Model } from '../model/model'
 import { Item } from './item'
 import { Metadata } from './metadata'
 

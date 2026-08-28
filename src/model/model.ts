@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { Floorplan } from './floorplan'
 import { Scene } from './scene'
 import { EventEmitter } from '../core/events'
+import { HistoryStack } from '../core/history'
 import type { SavedFloorplan } from './floorplan'
 
 export interface SerializedItem {
@@ -52,7 +53,59 @@ export class Model {
     this.scene = new Scene(this, textureDir)
   }
 
-  public loadSerialized(json: string): void {
+  public readonly history = new HistoryStack()
+  public readonly historyChanged = new EventEmitter<void>()
+  private restoring = false
+
+  public beginHistory(): void {
+    if (!this.restoring) {
+      this.history.begin()
+    }
+  }
+
+  public commitHistory(): boolean {
+    if (this.restoring) {
+      return false
+    }
+    const changed = this.history.commit(this.exportSerialized())
+    if (changed) {
+      this.historyChanged.fire()
+    }
+    return changed
+  }
+
+  public seedHistory(): void {
+    this.history.seed(this.exportSerialized())
+    this.historyChanged.fire()
+  }
+
+  public undo(): boolean {
+    const snap = this.history.undo()
+    if (!snap) {
+      return false
+    }
+    this.restoreSnapshot(snap)
+    this.historyChanged.fire()
+    return true
+  }
+
+  public redo(): boolean {
+    const snap = this.history.redo()
+    if (!snap) {
+      return false
+    }
+    this.restoreSnapshot(snap)
+    this.historyChanged.fire()
+    return true
+  }
+
+  private restoreSnapshot(json: string): void {
+    this.restoring = true
+    this.loadSerialized(json, { seedHistory: false })
+    this.restoring = false
+  }
+
+  public loadSerialized(json: string, options: { seedHistory?: boolean } = {}): void {
     // TODO: better documentation on serialization format.
     // TODO: a much better serialization format.
     this.roomLoadingCallbacks.fire()
@@ -61,6 +114,9 @@ export class Model {
     this.newRoom(data.floorplan, data.items)
 
     this.roomLoadedCallbacks.fire()
+    if (options.seedHistory !== false && !this.restoring) {
+      this.seedHistory()
+    }
   }
 
   public exportSerialized(): string {

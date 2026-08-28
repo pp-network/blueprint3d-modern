@@ -15,14 +15,69 @@
       "newPlan": "新建方案",
       "savePlan": "保存方案",
       "downloadPlan": "下载方案",
-      "loadPlan": "加载方案"
+      "loadPlan": "加载方案",
+      "undo": "復原",
+      "redo": "重做",
+      "exportJson": "匯出 JSON",
+      "importJson": "匯入 JSON",
+      "unsaved": "未儲存",
+      "exportSuccess": "已匯出 JSON",
+      "importSuccess": "已匯入方案",
+      "importError": "JSON 格式不對，需要包含 floorplan 和 items"
+    },
+    "howTo": {
+      "steps": "匯入戶型圖或選範本 → 畫牆擺家具 → 匯出 JSON"
+    },
+    "viewer": {
+      "zoomIn": "放大",
+      "zoomOut": "縮小",
+      "resetView": "復位視角"
+    },
+    "wallThickness": {
+      "title": "牆厚"
+    },
+    "overlay": {
+      "title": "戶型底圖",
+      "import": "匯入圖片",
+      "clear": "清除底圖",
+      "clearWalls": "清空示例牆體",
+      "clearWallsSuccess": "已清空牆體，可以按底圖描牆",
+      "hint": "先填圖紙總寬（毫米），再匯入。已設定 API Key 時優先用 AI 認外牆；結果可手改。",
+      "importSuccess": "底圖已匯入，正在認牆。",
+      "importError": "無法讀取這張圖片，請改用 PNG 或 JPG",
+      "overallWidth": "圖紙總寬",
+      "detect": "本地識別",
+      "detectAi": "AI 認牆",
+      "aiNotConfigured": "未設定 AI。在 app/.env.local 寫入 CURSOR_API_KEY 後重啟。",
+      "detecting": "正在識別（最長約 10 分鐘），牆體和思考過程會陸續出現…",
+      "detectingShort": "識別中…",
+      "streamElapsed": "已等待 {seconds} 秒",
+      "detectingPartial": "已畫出外牆 {outer} 個點，內牆 {inner} 段…",
+      "streamTitle": "{model} 過程",
+      "streamThinking": "思考過程",
+      "streamOutput": "輸出過程",
+      "streamWaiting": "等待模型開始用中文思考…",
+      "streamFindings": "讀圖資訊",
+      "detectSuccess": "識別到 {count} 面牆，可再手改或兩點校準",
+      "detectFallback": "AI 超時。已先用本地識別畫出 {count} 面牆，請對照底圖手改",
+      "detectEmpty": "沒有識別到牆。請換更清晰的 CAD 圖，或改用 AI 認牆",
+      "detectError": "認牆失敗，請換一張圖或改為手繪",
+      "opacity": "透明度",
+      "lock": "鎖定底圖",
+      "calibrate": "兩點校準",
+      "calibrateHint": "在圖上點已知長度的兩端",
+      "knownLength": "這段實際長度",
+      "apply": "套用",
+      "cancel": "取消",
+      "undoLast": "撤銷上一點"
     },
     "floorplanner": {
       "moveWalls": "移动墙体",
       "drawWalls": "绘制墙体",
       "deleteWalls": "删除墙体",
       "done": "完成",
-      "escHint": "按\"Esc\"键停止绘制墙体"
+      "undoLast": "撤銷上一步",
+      "escHint": "Esc 停止繪製；Backspace 或 ⌘Z 撤銷上一步"
     },
     "viewToggle": {
       "3d": "3D",
@@ -42,6 +97,11 @@
       "loadNotFound": "未找到平面图",
       "deleteButton": "删除",
       "editButton": "编辑",
+      "duplicateButton": "複製",
+      "copySuffix": "{name} 副本",
+      "duplicatingItem": "正在複製\"{name}\"...",
+      "duplicateSuccess": "已複製\"{name}\"",
+      "duplicateError": "複製失敗",
       "deleteConfirm": "您确定要删除此平面图吗？",
       "deleteError": "删除平面图失败",
       "lastModified": "上次修改",
@@ -211,6 +271,9 @@
       "depth": "深度",
       "height": "高度",
       "lockInPlace": "锁定位置",
+      "rotateLeft": "左转",
+      "rotateRight": "右转",
+      "moveHint": "选中后按住物品或地面拖动；黄色箭头也可旋转。鼠标滚轮或右侧按钮缩放。",
       "measurementsIn": "测量单位",
       "units": {
         "inches": "英寸",

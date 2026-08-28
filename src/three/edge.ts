@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { Utils } from '../core/utils'
 import type { HalfEdge } from '../model/half_edge'
 import type { Controls } from './controls'
+import { loadTextureOrFallback, makePlasterWallTexture } from './default-materials'
 
 export class Edge {
   private readonly scene: THREE.Scene
@@ -14,12 +15,9 @@ export class Edge {
   private basePlanes: THREE.Mesh[] = [] // always visible
   private texture: THREE.Texture | null = null
   private currentTextureUrl: string = ''
-  private readonly textureLoader = new THREE.TextureLoader()
-  private readonly lightMap: THREE.Texture
-  // Brightened colors for Three.js r181
-  private readonly fillerColor = 0xffffff
-  private readonly sideColor = 0xeeeeee
-  private readonly baseColor = 0xffffff
+  private readonly fillerColor = 0xe8ddd0
+  private readonly sideColor = 0xd9cfc2
+  private readonly baseColor = 0xe8ddd0
 
   public visible = false
 
@@ -34,8 +32,6 @@ export class Edge {
     this.renderer = renderer
     this.wall = edge.wall
     this.front = edge.front
-    this.lightMap = this.textureLoader.load('https://cdn-images.lumenfeng.com/models-cover/walllightmap.png')
-    this.lightMap.colorSpace = THREE.SRGBColorSpace
 
     // Bind functions once and store references
     this.boundRedraw = this.redraw.bind(this)
@@ -136,21 +132,21 @@ export class Edge {
     const url = textureData.url
     const scale = textureData.scale
 
-    // Only reload texture if URL has changed
     if (url !== this.currentTextureUrl) {
       this.currentTextureUrl = url
-      const loader = new THREE.TextureLoader()
-      this.texture = loader.load(url, cb)
+      this.texture = loadTextureOrFallback(url, makePlasterWallTexture)
       this.texture.colorSpace = THREE.SRGBColorSpace
-      // Apply anisotropic filtering for sharper textures at angles
       this.texture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
       this.texture.minFilter = THREE.LinearMipmapLinearFilter
       this.texture.magFilter = THREE.LinearFilter
+      if (this.texture.image) {
+        cb()
+      }
     }
 
     // Always update texture parameters (stretch, scale, etc.)
     if (this.texture) {
-      if (!stretch) {
+      if (!stretch && scale > 0) {
         const height = this.wall.height
         const width = this.edge.interiorDistance()
         this.texture.wrapT = THREE.RepeatWrapping
@@ -164,11 +160,9 @@ export class Edge {
   private updatePlanes(): void {
     // Switched to MeshLambertMaterial for proper lighting interaction
     const wallMaterial = new THREE.MeshLambertMaterial({
-      color: 0xffffff,
+      color: 0xf4eee6,
       side: THREE.FrontSide,
-      map: this.texture,
-      emissive: 0xffffff,       // Keeps walls bright
-      emissiveIntensity: 0.3    // While showing depth from lighting
+      map: this.texture
     })
 
     const fillerMaterial = new THREE.MeshBasicMaterial({

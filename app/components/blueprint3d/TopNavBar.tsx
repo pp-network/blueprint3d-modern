@@ -1,6 +1,6 @@
 'use client'
 
-import { Settings, FilePlus } from 'lucide-react'
+import { Settings, FilePlus, Undo2, Redo2, Download, Upload } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
@@ -15,6 +15,13 @@ interface TopNavBarProps {
   onSettingsClick: () => void
   onSave: () => void
   onNew: () => void
+  onUndo: () => void
+  onRedo: () => void
+  canUndo: boolean
+  canRedo: boolean
+  dirty: boolean
+  onExport: () => void
+  onImport: () => void
   currentBlueprintName?: string | null
 }
 
@@ -26,7 +33,13 @@ export function TopNavBar({
   onSettingsClick,
   onSave,
   onNew,
-  currentBlueprintName
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  dirty,
+  onExport,
+  onImport
 }: TopNavBarProps) {
   const t = useTranslations('BluePrint.sidebar')
   const tMain = useTranslations('BluePrint.mainControls')
@@ -40,7 +53,6 @@ export function TopNavBar({
 
   return (
     <div className={cn('bg-transparent relative pointer-events-none', isMobile ? 'h-12' : 'h-14')}>
-      {/* Left: Tabs - Hidden in 2D mode */}
       {!(activeTab === 'edit' && viewMode === '2d') && (
         <div className={cn(
           'absolute top-0 flex items-center pointer-events-auto',
@@ -64,7 +76,6 @@ export function TopNavBar({
         </div>
       )}
 
-      {/* Center: 2D/3D Switch - Absolutely centered */}
       {activeTab === 'edit' && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-auto z-[100]">
           <div className={cn(
@@ -94,45 +105,88 @@ export function TopNavBar({
         </div>
       )}
 
-      {/* Right: Tools - Hidden in 2D mode */}
-      {!(activeTab === 'edit' && viewMode === '2d') && (
-        <div className={cn(
-          'absolute top-0 flex items-center pointer-events-auto',
-          isMobile ? 'right-2 h-12 gap-1' : 'right-4 h-14 gap-2'
-        )}>
-          {/* New Button */}
-          <Button
-            onClick={onNew}
-            variant="outline"
-            size={isMobile ? 'sm' : 'sm'}
-            className={cn(isMobile && 'h-8 px-3 text-xs')}
-          >
-            <FilePlus className={cn('h-4 w-4', !isMobile && 'mr-1.5')} />
-            {!isMobile && tMain('newPlan')}
-          </Button>
-
-          {/* Save Button */}
-          <Button
-            onClick={onSave}
-            variant="default"
-            size={isMobile ? 'sm' : 'sm'}
-            className={cn(isMobile && 'h-8 px-3 text-xs')}
-          >
-            {tMain('savePlan')}
-          </Button>
-
-          {/* Settings Button */}
-          <Button
-            onClick={onSettingsClick}
-            variant="outline"
-            size="icon"
-            className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
-            aria-label="Settings"
-          >
-            <Settings className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
-          </Button>
-        </div>
-      )}
+      <div className={cn(
+        'absolute top-0 flex items-center pointer-events-auto',
+        isMobile ? 'right-2 h-12 gap-1' : 'right-4 h-14 gap-2'
+      )}>
+        {dirty && (
+          <span className={cn('text-muted-foreground', isMobile ? 'text-[10px]' : 'text-xs')}>
+            {tMain('unsaved')}
+          </span>
+        )}
+        <Button
+          onClick={onUndo}
+          variant="outline"
+          size="icon"
+          disabled={!canUndo}
+          className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
+          aria-label={tMain('undo')}
+          title={tMain('undo')}
+        >
+          <Undo2 className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+        </Button>
+        <Button
+          onClick={onRedo}
+          variant="outline"
+          size="icon"
+          disabled={!canRedo}
+          className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
+          aria-label={tMain('redo')}
+          title={tMain('redo')}
+        >
+          <Redo2 className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+        </Button>
+        <Button
+          onClick={onImport}
+          variant="outline"
+          size="icon"
+          className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
+          aria-label={tMain('importJson')}
+          title={tMain('importJson')}
+        >
+          <Upload className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+        </Button>
+        <Button
+          onClick={onExport}
+          variant="outline"
+          size="icon"
+          className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
+          aria-label={tMain('exportJson')}
+          title={tMain('exportJson')}
+        >
+          <Download className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+        </Button>
+        {!(activeTab === 'edit' && viewMode === '2d') && (
+          <>
+            <Button
+              onClick={onNew}
+              variant="outline"
+              size={isMobile ? 'sm' : 'sm'}
+              className={cn(isMobile && 'h-8 px-3 text-xs')}
+            >
+              <FilePlus className={cn('h-4 w-4', !isMobile && 'mr-1.5')} />
+              {!isMobile && tMain('newPlan')}
+            </Button>
+            <Button
+              onClick={onSave}
+              variant="default"
+              size={isMobile ? 'sm' : 'sm'}
+              className={cn(isMobile && 'h-8 px-3 text-xs')}
+            >
+              {tMain('savePlan')}
+            </Button>
+            <Button
+              onClick={onSettingsClick}
+              variant="outline"
+              size="icon"
+              className={cn(isMobile ? 'h-8 w-8' : 'h-9 w-9')}
+              aria-label="Settings"
+            >
+              <Settings className={cn(isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+            </Button>
+          </>
+        )}
+      </div>
     </div>
   )
 }

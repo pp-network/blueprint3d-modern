@@ -42,6 +42,7 @@ export class FloorplanThree {
 
     // draw edges
     this.floorplan.wallEdges().forEach((edge) => {
+      if (edge.wall.opening) return
       const threeEdge = new Edge(this.scene, edge, this.controls, this.renderer)
       this.edges.push(threeEdge)
     })

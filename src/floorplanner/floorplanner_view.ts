@@ -101,12 +101,14 @@ export class FloorplannerView {
     this.context.clearRect(0, 0, this.canvasElement.width, this.canvasElement.height)
 
     this.drawGrid()
+    this.drawOverlay()
 
     this.floorplan.getRooms().forEach((room) => {
       this.drawRoom(room)
     })
 
     this.floorplan.getWalls().forEach((wall) => {
+      if (wall.opening) return
       this.drawWall(wall)
     })
 
@@ -119,6 +121,7 @@ export class FloorplannerView {
     }
 
     this.floorplan.getWalls().forEach((wall) => {
+      if (wall.opening) return
       this.drawWallLabels(wall)
     })
   }
@@ -140,20 +143,62 @@ export class FloorplannerView {
   }
 
   /** */
+  private drawOverlay() {
+    const overlay = this.viewmodel.overlay
+    if (!overlay?.image) {
+      return
+    }
+    const x = this.viewmodel.convertX(overlay.originX)
+    const y = this.viewmodel.convertY(overlay.originY)
+    const widthPx =
+      overlay.image.naturalWidth * overlay.cmPerImagePixel * this.viewmodel.pixelsPerCm
+    const heightPx =
+      overlay.image.naturalHeight * overlay.cmPerImagePixel * this.viewmodel.pixelsPerCm
+    this.context.save()
+    this.context.globalAlpha = overlay.opacity
+    this.context.drawImage(overlay.image, x, y, widthPx, heightPx)
+    this.context.restore()
+
+    if (this.viewmodel.overlayCalibratePoints.length > 0) {
+      this.context.fillStyle = '#f97316'
+      this.viewmodel.overlayCalibratePoints.forEach((p) => {
+        this.context.beginPath()
+        this.context.arc(this.viewmodel.convertX(p.x), this.viewmodel.convertY(p.y), 5, 0, Math.PI * 2)
+        this.context.fill()
+      })
+      if (this.viewmodel.overlayCalibratePoints.length === 2) {
+        const [a, b] = this.viewmodel.overlayCalibratePoints
+        this.drawLine(
+          this.viewmodel.convertX(a.x),
+          this.viewmodel.convertY(a.y),
+          this.viewmodel.convertX(b.x),
+          this.viewmodel.convertY(b.y),
+          2,
+          '#f97316'
+        )
+      }
+    }
+  }
+
   private drawWall(wall: Wall) {
     const hover = wall === this.viewmodel.activeWall
+    const selected = wall === this.viewmodel.selectedWall
     let color = wallColor
     if (hover && this.viewmodel.mode == floorplannerModes.DELETE) {
       color = deleteColor
+    } else if (selected) {
+      color = '#0f766e'
     } else if (hover) {
       color = wallColorHover
     }
+    const thicknessPx = Math.max(wallWidth, wall.thickness * this.viewmodel.pixelsPerCm * 0.4)
+    const lineWidth = selected || hover ? Math.max(wallWidthHover, thicknessPx) : thicknessPx
     this.drawLine(
       this.viewmodel.convertX(wall.getStartX()),
       this.viewmodel.convertY(wall.getStartY()),
       this.viewmodel.convertX(wall.getEndX()),
       this.viewmodel.convertY(wall.getEndY()),
-      hover ? wallWidthHover : wallWidth,
+      lineWidth,
       color
     )
     if (!hover && wall.frontEdge) {

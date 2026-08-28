@@ -42,7 +42,11 @@ export class Blueprint3d {
     })
 
     if (!options.widget) {
-      this.floorplanner = new Floorplanner(options.floorplannerElement || '', this.model.floorplan)
+      this.floorplanner = new Floorplanner(
+        options.floorplannerElement || '',
+        this.model.floorplan,
+        this.model
+      )
     } else {
       this.three.getController().enabled = false
     }

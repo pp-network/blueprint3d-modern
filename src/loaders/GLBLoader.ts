@@ -14,7 +14,8 @@ export class GLBLoader {
   constructor(manager?: THREE.LoadingManager) {
     this.manager = manager || THREE.DefaultLoadingManager
 
-    // Initialize Draco loader
+    // glTF-targeted decoder files are served from app/public/draco/
+    // (copied from three/examples/jsm/libs/draco/gltf/).
     this.dracoLoader = new DRACOLoader(this.manager)
     this.dracoLoader.setDecoderPath('/draco/')
 

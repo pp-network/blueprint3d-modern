@@ -15,14 +15,69 @@
       "newPlan": "New Plan",
       "savePlan": "Save Plan",
       "downloadPlan": "Download Plan",
-      "loadPlan": "Load Plan"
+      "loadPlan": "Load Plan",
+      "undo": "Undo",
+      "redo": "Redo",
+      "exportJson": "Export JSON",
+      "importJson": "Import JSON",
+      "unsaved": "Unsaved",
+      "exportSuccess": "JSON exported",
+      "importSuccess": "Floor plan imported",
+      "importError": "Invalid JSON — need floorplan and items"
+    },
+    "howTo": {
+      "steps": "Import a plan image or pick a template → draw walls and furniture → export JSON"
+    },
+    "viewer": {
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "resetView": "Reset view"
+    },
+    "wallThickness": {
+      "title": "Wall thickness"
+    },
+    "overlay": {
+      "title": "Plan overlay",
+      "import": "Import image",
+      "clear": "Clear overlay",
+      "clearWalls": "Clear sample walls",
+      "clearWallsSuccess": "Walls cleared. Trace over the overlay.",
+      "hint": "Enter overall width in mm, then import. If an API key is set, AI extracts the outer walls first. You can still edit.",
+      "importSuccess": "Overlay imported. Detecting walls…",
+      "importError": "Could not read that image. Use PNG or JPG.",
+      "overallWidth": "Overall width",
+      "detect": "Local detect",
+      "detectAi": "AI detect walls",
+      "aiNotConfigured": "AI is off. Add CURSOR_API_KEY to app/.env.local and restart.",
+      "detecting": "Detecting (up to 10 minutes). Walls and model thoughts will stream in…",
+      "detectingShort": "Detecting…",
+      "streamElapsed": "Waited {seconds}s",
+      "detectingPartial": "Outer points {outer}, inner walls {inner}…",
+      "streamTitle": "{model} stream",
+      "streamThinking": "Thinking",
+      "streamOutput": "Output",
+      "streamWaiting": "Waiting for the model to start thinking in Chinese…",
+      "streamFindings": "Reading notes",
+      "detectSuccess": "Found {count} walls. Edit or calibrate if needed.",
+      "detectFallback": "AI timed out. Showing {count} locally detected walls — edit against the overlay.",
+      "detectEmpty": "No walls found. Try a cleaner CAD export or AI detect.",
+      "detectError": "Wall detection failed. Try another image or draw by hand.",
+      "opacity": "Opacity",
+      "lock": "Lock overlay",
+      "calibrate": "Two-point scale",
+      "calibrateHint": "Click both ends of a known length",
+      "knownLength": "Real length",
+      "apply": "Apply",
+      "cancel": "Cancel",
+      "undoLast": "Undo last point"
     },
     "floorplanner": {
       "moveWalls": "Move Walls",
       "drawWalls": "Draw Walls",
       "deleteWalls": "Delete Walls",
       "done": "Done",
-      "escHint": "Press the \"Esc\" key to stop drawing walls"
+      "undoLast": "Undo last",
+      "escHint": "Esc stops drawing. Backspace or ⌘Z undoes the last step."
     },
     "viewToggle": {
       "3d": "3D",
@@ -42,6 +97,11 @@
       "loadNotFound": "Floorplan not found",
       "deleteButton": "Delete",
       "editButton": "Edit",
+      "duplicateButton": "Duplicate",
+      "copySuffix": "{name} copy",
+      "duplicatingItem": "Duplicating \"{name}\"...",
+      "duplicateSuccess": "Duplicated \"{name}\"",
+      "duplicateError": "Failed to duplicate",
       "deleteConfirm": "Are you sure you want to delete this floorplan?",
       "deleteError": "Failed to delete floorplan",
       "lastModified": "Last modified",
@@ -211,6 +271,9 @@
       "depth": "Depth",
       "height": "Height",
       "lockInPlace": "Lock in place",
+      "rotateLeft": "Rotate left",
+      "rotateRight": "Rotate right",
+      "moveHint": "Drag the item or the floor to move it. Use the yellow handle or buttons to rotate. Scroll or use the zoom buttons.",
       "measurementsIn": "Measurements in",
       "units": {
         "inches": "inches",

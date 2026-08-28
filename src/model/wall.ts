@@ -5,11 +5,11 @@ import type { Item } from '../items/item'
 import type { Corner } from './corner'
 import type { HalfEdge } from './half_edge'
 
-/** The default wall texture. */
+/** The default wall texture. Empty URL uses a local plaster fallback. */
 const defaultWallTexture = {
-  url: 'https://cdn-images.lumenfeng.com/models-cover/wallmap.png',
+  url: '',
   stretch: true,
-  scale: 0
+  scale: 300
 }
 
 /**
@@ -48,6 +48,9 @@ export class Wall {
 
   /** Wall height. */
   public height = Configuration.getNumericValue(configWallHeight)
+
+  /** Topology-only span across a door. Hidden in 2D/3D, used to form rooms. */
+  public opening = false
 
   /** Actions to be applied after movement. */
   private moved_callbacks = new EventEmitter<void>()

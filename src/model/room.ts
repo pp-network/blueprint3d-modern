@@ -12,9 +12,9 @@ var segseg = require('segseg')
 var Polygon = require('polygon')
 */
 
-/** Default texture to be used if nothing is provided. */
+/** Default texture to be used if nothing is provided. Empty URL uses local wood. */
 const defaultRoomTexture = {
-  url: 'https://cdn-images.lumenfeng.com/models-cover/hardwood.png',
+  url: '',
   scale: 400
 }
 

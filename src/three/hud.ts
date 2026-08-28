@@ -13,15 +13,15 @@ export class HUD {
   private mouseover = false
   // @ts-ignore - tolerance is declared but not used, keeping for future use
   private readonly tolerance = 10
-  private readonly height = 5
-  private readonly distance = 20
-  private readonly color = '#ffffff'
-  private readonly hoverColor = '#f1c40f'
+  private readonly height = 12
+  private readonly distance = 36
+  private readonly color = '#f59e0b'
+  private readonly hoverColor = '#fde047'
   private activeObject: THREE.Object3D | null = null
 
   // Mobile detection for larger touch targets
   private readonly isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-  private readonly scaleFactor = this.isMobile ? 1.8 : 1.0 // Make 80% larger on mobile
+  private readonly scaleFactor = this.isMobile ? 2.2 : 1.6
 
   constructor(three: Main) {
     this.three = three

@@ -8,6 +8,7 @@ export * from './core/utils'
 export * from './core/configuration'
 export * from './core/dimensioning'
 export * from './core/version'
+export { HistoryStack } from './core/history'
 
 // Model modules
 export { Model } from './model/model'

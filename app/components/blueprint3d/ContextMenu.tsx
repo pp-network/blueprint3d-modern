@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { RotateCcw, RotateCw, Trash2 } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -17,9 +17,16 @@ interface ContextMenuProps {
   onDelete: () => void
   onResize: (height: number, width: number, depth: number) => void
   onFixedChange: (fixed: boolean) => void
+  onRotate: (radians: number) => void
 }
 
-export function ContextMenu({ selectedItem, onDelete, onResize, onFixedChange }: ContextMenuProps) {
+export function ContextMenu({
+  selectedItem,
+  onDelete,
+  onResize,
+  onFixedChange,
+  onRotate
+}: ContextMenuProps) {
   const t = useTranslations('BluePrint.contextMenu')
   const tItems = useTranslations('BluePrint.items')
   const isMobile = useIsMobile()
@@ -193,6 +200,30 @@ export function ContextMenu({ selectedItem, onDelete, onResize, onFixedChange }:
           {getUnitLabel(currentUnit)}
         </p>
       </div>
+
+      <div className={cn('mb-3 flex gap-2', isMobile && 'gap-3')}>
+        <Button
+          type="button"
+          variant="outline"
+          className={cn('flex-1', isMobile ? 'h-10' : 'h-8 text-xs')}
+          onClick={() => onRotate(-Math.PI / 2)}
+        >
+          <RotateCcw className="mr-1 h-3.5 w-3.5" />
+          {t('rotateLeft')}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className={cn('flex-1', isMobile ? 'h-10' : 'h-8 text-xs')}
+          onClick={() => onRotate(Math.PI / 2)}
+        >
+          <RotateCw className="mr-1 h-3.5 w-3.5" />
+          {t('rotateRight')}
+        </Button>
+      </div>
+      <p className={cn('mb-2 text-muted-foreground', isMobile ? 'text-xs' : 'text-[10px]')}>
+        {t('moveHint')}
+      </p>
 
       {/* Lock checkbox */}
       <label className={cn(
