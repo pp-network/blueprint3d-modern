@@ -2,12 +2,21 @@ import { Floorplan } from '../model/floorplan'
 import { Wall } from '../model/wall'
 import { Corner } from '../model/corner'
 import { FloorplannerView, floorplannerModes } from './floorplanner_view'
+import {
+  fillOpening,
+  isolateOpening,
+  isolateOpeningCorner,
+  isOpeningOnlyCorner,
+  openingAtCorner,
+  syncOpeningPlacement
+} from '../model/opening-wall'
 import { EventEmitter } from '../core/events'
 import type { Model } from '../model/model'
 import {
   applyCalibration,
   copyOverlayTransform,
   createOverlay,
+  createOverlayAlignedToWalls,
   restoreOverlayTransform,
   type FloorplanOverlay,
   type OverlayTransform
@@ -56,6 +65,8 @@ export class Floorplanner {
   public lastWallTrace: WallTrace | null = null
 
   public overlayCalibrating = false
+  /** Draw detected walls as thin traces so the CAD overlay stays readable. */
+  public compareOverlay = true
 
   public overlayCalibratePoints: Array<{ x: number; y: number }> = []
 
@@ -178,14 +189,18 @@ export class Floorplanner {
         this.escapeKey()
         return
       }
-      if (e.key !== 'Backspace') {
+      if (e.key !== 'Backspace' && e.key !== 'Delete') {
         return
       }
       const target = e.target as HTMLElement | null
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
         return
       }
-      if (this.undoLastChange()) {
+      if (this.deleteSelectedOrHovered()) {
+        e.preventDefault()
+        return
+      }
+      if (e.key === 'Backspace' && this.undoLastChange()) {
         e.preventDefault()
       }
     })
@@ -202,7 +217,7 @@ export class Floorplanner {
 
   /** */
   private updateTarget(): void {
-    if (this.mode == floorplannerModes.DRAW && this.lastNode) {
+    if (this.isDrawMode() && this.lastNode) {
       if (Math.abs(this.mouseX - this.lastNode.x) < snapTolerance) {
         this.targetX = this.lastNode.x
       } else {
@@ -234,6 +249,15 @@ export class Floorplanner {
 
     if (this.mode == floorplannerModes.MOVE) {
       this.model?.beginHistory()
+      if (this.activeCorner) {
+        const opening = openingAtCorner(this.activeCorner)
+        if (opening) {
+          this.activeCorner = isolateOpeningCorner(this.floorplan, opening, this.activeCorner)
+          this.activeWall = null
+        }
+      } else if (this.activeWall?.opening) {
+        isolateOpening(this.floorplan, this.activeWall)
+      }
     }
 
     // delete
@@ -244,9 +268,15 @@ export class Floorplanner {
         this.model?.commitHistory()
         this.setSelectedWall(null)
       } else if (this.activeWall) {
-        this.activeWall.remove()
+        if (this.activeWall.opening) {
+          fillOpening(this.floorplan, this.activeWall)
+        } else {
+          this.activeWall.remove()
+        }
         this.model?.commitHistory()
         this.setSelectedWall(null)
+      } else if (this.removeDetectedOpeningAt(this.mouseX, this.mouseY)) {
+        this.model?.commitHistory()
       } else {
         this.model?.history.cancel()
         this.setMode(floorplannerModes.MOVE)
@@ -268,29 +298,31 @@ export class Floorplanner {
 
     // update target (snapped position of actual mouse)
     if (
-      this.mode == floorplannerModes.DRAW ||
+      this.isDrawMode() ||
       (this.mode == floorplannerModes.MOVE && this.mouseDown)
     ) {
       this.updateTarget()
     }
 
-    // update object target
-    if (this.mode != floorplannerModes.DRAW && !this.mouseDown) {
+    // Hover corners first (including door jambs) so a vertex can be dragged without the wall.
+    if (!this.mouseDown) {
       const hoverCorner: Corner | null = this.floorplan.overlappedCorner(this.mouseX, this.mouseY)
-      const hoverWall: Wall | null = this.floorplan.overlappedWall(this.mouseX, this.mouseY)
+      const hoverWall: Wall | null = hoverCorner
+        ? null
+        : this.floorplan.overlappedWall(this.mouseX, this.mouseY)
       let draw = false
       if (hoverCorner != this.activeCorner) {
         this.activeCorner = hoverCorner
         draw = true
       }
-      // corner takes precendence
       if (this.activeCorner == null) {
         if (hoverWall != this.activeWall) {
           this.activeWall = hoverWall
           draw = true
         }
-      } else {
+      } else if (this.activeWall != null) {
         this.activeWall = null
+        draw = true
       }
       if (draw) {
         this.view.draw()
@@ -315,14 +347,32 @@ export class Floorplanner {
     // dragging
     if (this.mode == floorplannerModes.MOVE && this.mouseDown) {
       if (this.activeCorner) {
-        this.activeCorner.move(this.mouseX, this.mouseY)
+        const free = isOpeningOnlyCorner(this.activeCorner)
+        this.activeCorner.move(this.mouseX, this.mouseY, { merge: !free })
         this.activeCorner.snapToAxis(snapTolerance)
+        if (free) {
+          const opening = openingAtCorner(this.activeCorner)
+          if (opening) syncOpeningPlacement(this.floorplan, opening)
+        }
       } else if (this.activeWall) {
-        this.activeWall.relativeMove(
-          (this.rawMouseX - this.lastX) * this.cmPerPixel,
-          (this.rawMouseY - this.lastY) * this.cmPerPixel
-        )
-        this.activeWall.snapToAxis(snapTolerance)
+        const dx = (this.rawMouseX - this.lastX) * this.cmPerPixel
+        const dy = (this.rawMouseY - this.lastY) * this.cmPerPixel
+        if (this.activeWall.opening) {
+          this.activeWall.getStart().move(
+            this.activeWall.getStartX() + dx,
+            this.activeWall.getStartY() + dy,
+            { merge: false }
+          )
+          this.activeWall.getEnd().move(
+            this.activeWall.getEndX() + dx,
+            this.activeWall.getEndY() + dy,
+            { merge: false }
+          )
+          syncOpeningPlacement(this.floorplan, this.activeWall)
+        } else {
+          this.activeWall.relativeMove(dx, dy)
+          this.activeWall.snapToAxis(snapTolerance)
+        }
         this.lastX = this.rawMouseX
         this.lastY = this.rawMouseY
       }
@@ -355,13 +405,19 @@ export class Floorplanner {
     }
 
     // drawing
-    if (this.mode == floorplannerModes.DRAW && !this.mouseMoved) {
+    if (this.isDrawMode() && !this.mouseMoved) {
       this.model?.beginHistory()
       const corner = this.floorplan.newCorner(this.targetX, this.targetY)
       if (this.lastNode != null) {
-        this.floorplan.newWall(this.lastNode, corner)
+        this.floorplan.newWall(this.lastNode, corner, {
+          opening: this.mode == floorplannerModes.DRAW_DOOR
+        })
       }
-      if (corner.mergeWithIntersected() && this.lastNode != null) {
+      const joined =
+        this.mode != floorplannerModes.DRAW_DOOR &&
+        corner.mergeWithIntersected() &&
+        this.lastNode != null
+      if (joined) {
         this.setMode(floorplannerModes.MOVE)
       } else {
         this.lastNode = corner
@@ -389,6 +445,10 @@ export class Floorplanner {
   /** Resizes the view to fit the container */
   public resizeView(): void {
     this.view.handleWindowResize()
+  }
+
+  private isDrawMode(): boolean {
+    return this.mode == floorplannerModes.DRAW || this.mode == floorplannerModes.DRAW_DOOR
   }
 
   /** Sets the interaction mode */
@@ -420,6 +480,32 @@ export class Floorplanner {
     return (y - this.originY * this.cmPerPixel) * this.pixelsPerCm
   }
 
+  private deleteSelectedOrHovered(): boolean {
+    const wall = this.selectedWall ?? this.activeWall
+    const corner = wall ? null : this.activeCorner
+    if (!wall && !corner) return false
+    this.model?.beginHistory()
+    if (wall) {
+      if (wall.opening) {
+        fillOpening(this.floorplan, wall)
+      } else {
+        wall.remove()
+      }
+      this.setSelectedWall(null)
+    } else if (corner) {
+      corner.removeAll()
+      this.setSelectedWall(null)
+    }
+    if (this.lastNode && !this.floorplan.getCorners().includes(this.lastNode)) {
+      this.lastNode = null
+    }
+    this.activeWall = null
+    this.activeCorner = null
+    this.model?.commitHistory()
+    this.view.draw()
+    return true
+  }
+
   public setSelectedWall(wall: Wall | null): void {
     if (this.selectedWall === wall) {
       return
@@ -440,13 +526,40 @@ export class Floorplanner {
     this.view.draw()
   }
 
-  public setOverlayImage(image: HTMLImageElement): void {
+  public setOverlayImage(image: HTMLImageElement, options?: { overallWidthCm?: number }): void {
+    const walls = this.floorplan.getWalls()
+    const size = this.floorplan.getSize()
     const center = this.floorplan.getCenter()
-    const cx = Number.isFinite(center.x) ? center.x : 0
-    const cz = Number.isFinite(center.z) ? center.z : 0
-    const canvasW = this.canvasElement.clientWidth || this.canvasElement.width || 1000
-    const targetWidthCm = Math.max(canvasW * this.cmPerPixel * 0.9, 1600)
-    this.overlay = createOverlay(image, cx, cz, targetWidthCm)
+    const hasWalls = walls.length > 0 && Number.isFinite(size.x) && size.x > 1
+    const prior = this.overlay
+      ? copyOverlayTransform(this.overlay)
+      : this.floorplan.detectTransform
+    if (hasWalls) {
+      this.overlay = createOverlayAlignedToWalls(
+        image,
+        {
+          minX: center.x - size.x / 2,
+          minY: center.z - size.z / 2,
+          maxX: center.x + size.x / 2,
+          maxY: center.z + size.z / 2
+        },
+        {
+          overallWidthCm: options?.overallWidthCm,
+          prior,
+          opacity: this.overlay?.opacity,
+          locked: this.overlay?.locked
+        }
+      )
+    } else {
+      const cx = Number.isFinite(center.x) ? center.x : 0
+      const cz = Number.isFinite(center.z) ? center.z : 0
+      const canvasW = this.canvasElement.clientWidth || this.canvasElement.width || 1000
+      const targetWidthCm =
+        options?.overallWidthCm && options.overallWidthCm > 0
+          ? options.overallWidthCm
+          : Math.max(canvasW * this.cmPerPixel * 0.9, 1600)
+      this.overlay = createOverlay(image, cx, cz, targetWidthCm)
+    }
     this.lastWallTrace = null
     this.overlayCalibrating = false
     this.overlayCalibratePoints = []
@@ -498,6 +611,12 @@ export class Floorplanner {
       return
     }
     this.overlay.locked = locked
+    this.overlayChanged.fire()
+    this.view.draw()
+  }
+
+  public setCompareOverlay(compare: boolean): void {
+    this.compareOverlay = compare
     this.overlayChanged.fire()
     this.view.draw()
   }
@@ -607,7 +726,7 @@ export class Floorplanner {
       return false
     }
     this.model.redo()
-    if (this.mode === floorplannerModes.DRAW && this.drawRedo.length > 0) {
+    if (this.isDrawMode() && this.drawRedo.length > 0) {
       const point = this.drawRedo.pop()!
       this.drawChain.push(point)
       this.lastNode = this.findCornerNear(point)
@@ -625,7 +744,7 @@ export class Floorplanner {
   }
 
   private syncDrawNodeAfterUndo(): void {
-    if (this.mode !== floorplannerModes.DRAW) {
+    if (!this.isDrawMode()) {
       this.lastNode = null
       return
     }
@@ -635,6 +754,28 @@ export class Floorplanner {
     }
     const prev = this.drawChain[this.drawChain.length - 1]
     this.lastNode = prev ? this.findCornerNear(prev) : null
+  }
+
+  private removeDetectedOpeningAt(x: number, y: number): boolean {
+    const placements = this.floorplan.detectedPlacements
+    const map = this.floorplan.detectTransform
+    if (!placements?.openings?.length) return false
+    let best = -1
+    let bestDist = 30
+    for (let i = 0; i < placements.openings.length; i++) {
+      const opening = placements.openings[i]
+      const wx = map ? map.originX + opening.x * map.cmPerImagePixel : opening.x
+      const wy = map ? map.originY + opening.y * map.cmPerImagePixel : opening.y
+      const dist = Math.hypot(wx - x, wy - y)
+      if (dist < bestDist) {
+        best = i
+        bestDist = dist
+      }
+    }
+    if (best < 0) return false
+    placements.openings.splice(best, 1)
+    this.view.draw()
+    return true
   }
 
   private findCornerNear(point: { x: number; y: number }): Corner | null {

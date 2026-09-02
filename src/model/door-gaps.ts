@@ -24,6 +24,7 @@ export function findDoorGapPairs(corners: DoorGapCorner[]): Array<[string, strin
     for (let j = i + 1; j < dangling.length; j++) {
       const b = dangling[j]
       if (used.has(b.id) || !b.neighbor) continue
+      if (samePoint(b, a.neighbor)) continue
       if (!looksLikeDoorGap(a, b)) continue
       const dist = Math.hypot(b.x - a.x, b.y - a.y)
       if (dist < bestDist) {
@@ -49,6 +50,10 @@ function looksLikeDoorGap(a: DoorGapCorner, b: DoorGapCorner): boolean {
   const dirB = normalize(b.x - b.neighbor.x, b.y - b.neighbor.y)
   if (!gap || !dirA || !dirB) return false
   return Math.abs(dot(dirA, gap)) > 0.82 && Math.abs(dot(dirB, gap)) > 0.82
+}
+
+function samePoint(a: { x: number; y: number }, b: { x: number; y: number }): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) < 1e-4
 }
 
 function normalize(x: number, y: number): { x: number; y: number } | null {

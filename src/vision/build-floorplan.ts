@@ -94,5 +94,5 @@ export function savedFloorplanFromWorldSegments(segments: WorldSegment[]): Saved
 function snapTolerance(segments: WorldSegment[]): number {
   const bbox = traceBBox(segments)
   const span = Math.max(bbox.maxX - bbox.minX, bbox.maxY - bbox.minY)
-  return Math.max(8, span * 0.012)
+  return Math.max(12, span * 0.018)
 }

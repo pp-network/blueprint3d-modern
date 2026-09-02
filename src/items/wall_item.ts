@@ -2,6 +2,15 @@ import * as THREE from 'three'
 import { Utils } from '../core/utils'
 import { HalfEdge } from '../model/half_edge'
 import type { Model } from '../model/model'
+import {
+  collinearRun,
+  ensureOpeningWallAt,
+  fillOpening,
+  OPENING_SNAP_CM,
+  sharesCollinearRun,
+  slideOpeningTo,
+  wallLength
+} from '../model/opening-wall'
 import { Item } from './item'
 import { Metadata } from './metadata'
 
@@ -68,31 +77,32 @@ export abstract class WallItem extends Item {
   /** Get the closet wall edge.
    * @returns The wall edge.
    */
-  public closestWallEdge(): HalfEdge {
-    const wallEdges = this.model.floorplan.wallEdges()
+  public closestWallEdge(): HalfEdge | null {
+    return this.nearestEdgeAt(this.position.x, this.position.z)
+  }
 
+  protected nearestEdgeAt(x: number, z: number, maxDist = Infinity): HalfEdge | null {
     let wallEdge: HalfEdge | null = null
-    let minDistance: number | null = null
-
-    const itemX = this.position.x
-    const itemZ = this.position.z
-
-    wallEdges.forEach((edge: HalfEdge) => {
-      const distance = edge.distanceTo(itemX, itemZ)
-      if (minDistance === null || distance < minDistance) {
+    let minDistance = maxDist
+    for (const edge of this.model.floorplan.wallEdges()) {
+      const distance = edge.distanceTo(x, z)
+      if (distance < minDistance) {
         minDistance = distance
         wallEdge = edge
       }
-    })
-
-    return wallEdge!
+    }
+    return wallEdge
   }
 
   /** */
   public removed() {
+    const wall = this.currentWallEdge?.wall
     if (this.currentWallEdge != null && this.addToWall) {
       Utils.removeValue(this.currentWallEdge.wall.items, this)
       this.redrawWall()
+    }
+    if (this.addToWall && wall?.opening) {
+      fillOpening(this.model.floorplan, wall, { skipItems: true })
     }
   }
 
@@ -138,23 +148,73 @@ export abstract class WallItem extends Item {
 
   /** */
   public placeInRoom(): void {
-    const closestWallEdge = this.closestWallEdge()
-    this.changeWallEdge(closestWallEdge)
     this.updateSize()
-
     if (!this.position_set) {
-      // position not set
-      const center = closestWallEdge.interiorCenter()
-      const newPos = new THREE.Vector3(center.x, closestWallEdge.wall.height / 2.0, center.y)
-      this.boundMove(newPos)
-      this.position.copy(newPos)
-      this.redrawWall()
+      let edge = this.closestWallEdge()
+      if (!edge) {
+        const origin = this.model.floorplan.getCenter()
+        this.position.x = origin.x
+        this.position.z = origin.z
+        edge = this.snapOrCreateOpeningAt(origin.x, origin.z)
+      }
+      if (!edge) return
+      const center = edge.interiorCenter()
+      this.attachToEdge(edge, new THREE.Vector3(center.x, edge.wall.height / 2.0, center.y))
+      return
     }
+    const edge = this.snapOrCreateOpeningAt(this.position.x, this.position.z)
+    if (!edge) return
+    this.attachToEdge(edge, this.position.clone())
   }
 
   /** */
   public moveToPosition(vec3: THREE.Vector3, intersection: THREE.Intersection | null): void {
-    this.changeWallEdge((intersection!.object as any).edge)
+    const hitEdge = (intersection?.object as { edge?: HalfEdge } | undefined)?.edge
+    const current = this.currentWallEdge
+    if (current?.wall.opening) {
+      const along = hitEdge && sharesCollinearRun(current.wall, hitEdge.wall) ? hitEdge : current
+      if (along) {
+        this.attachToEdge(current, vec3)
+        return
+      }
+    }
+    const edge = hitEdge ?? this.nearestEdgeAt(vec3.x, vec3.z, OPENING_SNAP_CM)
+    if (edge) {
+      this.attachToEdge(edge, vec3)
+      return
+    }
+    this.position.x = vec3.x
+    this.position.z = vec3.z
+    if (this.boundToFloor && this.geometry.boundingBox) {
+      this.position.y =
+        0.5 * (this.geometry.boundingBox.max.y - this.geometry.boundingBox.min.y) * this.scale.y + 0.01
+    }
+  }
+
+  public commitToWallOrOpening(): void {
+    if (this.currentWallEdge?.wall.opening) {
+      slideOpeningTo(this.currentWallEdge.wall, this.position.x, this.position.z)
+      this.model.floorplan.update()
+      this.updateWallEdgeReference()
+      const edge = this.currentWallEdge ?? this.nearestEdgeAt(this.position.x, this.position.z)
+      if (edge) this.attachToEdge(edge, this.position.clone())
+      return
+    }
+    const edge = this.snapOrCreateOpeningAt(this.position.x, this.position.z)
+    if (!edge) return
+    this.attachToEdge(edge, this.position.clone())
+  }
+
+  protected snapOrCreateOpeningAt(x: number, z: number): HalfEdge | null {
+    const nearby = this.nearestEdgeAt(x, z, OPENING_SNAP_CM)
+    if (nearby) return nearby
+    if (!this.addToWall) return this.closestWallEdge()
+    ensureOpeningWallAt(this.model.floorplan, x, z, Math.max(this.sizeX, 80))
+    return this.closestWallEdge()
+  }
+
+  protected attachToEdge(edge: HalfEdge, vec3: THREE.Vector3): void {
+    this.changeWallEdge(edge)
     this.boundMove(vec3)
     this.position.copy(vec3)
     this.redrawWall()
@@ -234,10 +294,24 @@ export abstract class WallItem extends Item {
     const edge = this.currentWallEdge!
     vec3.applyMatrix4(edge.interiorTransform)
 
-    if (vec3.x < this.sizeX / 2.0 + tolerance) {
-      vec3.x = this.sizeX / 2.0 + tolerance
-    } else if (vec3.x > edge.interiorDistance() - this.sizeX / 2.0 - tolerance) {
-      vec3.x = edge.interiorDistance() - this.sizeX / 2.0 - tolerance
+    const run = edge.wall.opening ? collinearRun(edge.wall) : null
+    const openingLen = edge.interiorDistance()
+    const span = run && run.length > wallLength(edge.wall) + 1 ? run : null
+    const minX = span
+      ? this.sizeX / 2.0 + tolerance - span.shift
+      : this.sizeX / 2.0 + tolerance
+    const maxX = span
+      ? span.length - this.sizeX / 2.0 - tolerance - span.shift
+      : openingLen - this.sizeX / 2.0 - tolerance
+
+    if (minX <= maxX) {
+      if (vec3.x < minX) {
+        vec3.x = minX
+      } else if (vec3.x > maxX) {
+        vec3.x = maxX
+      }
+    } else if (!span) {
+      vec3.x = openingLen / 2.0
     }
 
     if (this.boundToFloor) {

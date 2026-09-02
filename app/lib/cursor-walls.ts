@@ -22,6 +22,8 @@ export async function detectWallsJsonWithCursor(opts: {
   imageBase64: string
   mimeType: string
   overallWidthMm?: number
+  imageWidth?: number
+  imageHeight?: number
   onPartial?: (partial: PartialAiWalls) => void
   onThinking?: (text: string) => void
   onOutput?: (text: string) => void
@@ -47,6 +49,8 @@ async function runCursorWalls(
     imageBase64: string
     mimeType: string
     overallWidthMm?: number
+    imageWidth?: number
+    imageHeight?: number
     onPartial?: (partial: PartialAiWalls) => void
     onThinking?: (text: string) => void
     onOutput?: (text: string) => void
@@ -58,7 +62,7 @@ async function runCursorWalls(
   const cwd = await mkdtemp(join(tmpdir(), 'b3d-ai-walls-'))
   const prompt = [
     AI_WALLS_SYSTEM_PROMPT,
-    AI_WALLS_USER_PROMPT(opts.overallWidthMm),
+    AI_WALLS_USER_PROMPT(opts.overallWidthMm, { width: opts.imageWidth, height: opts.imageHeight }),
     '思考只用简体中文谈这张图纸。不要提工具。在消息里直接给出 JSON，然后停止。'
   ].join('\n\n')
 
@@ -80,7 +84,8 @@ async function runCursorWalls(
       enableAgentRetries: false,
       customTools: {
         submit_walls: {
-          description: '提交结构墙骨架：outerLoop 含阳台与凹凸，innerWalls 在门洞处断开。只调用一次后停止。',
+          description:
+            '提交结构墙骨架：outerLoop 含阳台与凹凸；innerWalls 先描粗承重墙（含拐弯），再把每个有名字的房间四壁接到墙或门垛，门洞只空约一扇门宽；findings 写房间/门窗/家具。只调用一次后停止。',
           inputSchema: {
             type: 'object',
             additionalProperties: false,
@@ -107,6 +112,16 @@ async function runCursorWalls(
                     x2: { type: 'number' },
                     y2: { type: 'number' }
                   }
+                }
+              },
+              findings: {
+                type: 'object',
+                additionalProperties: true,
+                properties: {
+                  overallWidthMm: { type: 'number' },
+                  rooms: { type: 'array' },
+                  furniture: { type: 'array' },
+                  openings: { type: 'array' }
                 }
               }
             }

@@ -23,6 +23,8 @@ interface OverlayControlsProps {
   onClearWalls: () => void
   onOpacity: (value: number) => void
   onLocked: (locked: boolean) => void
+  compareOverlay?: boolean
+  onCompareOverlay?: (compare: boolean) => void
   onStartCalibrate: () => void
   onApplyCalibrate: (lengthCm: number) => void
   onCancelCalibrate: () => void
@@ -45,6 +47,8 @@ export function OverlayControls({
   onClearWalls,
   onOpacity,
   onLocked,
+  compareOverlay,
+  onCompareOverlay,
   onStartCalibrate,
   onApplyCalibrate,
   onCancelCalibrate,
@@ -143,6 +147,12 @@ export function OverlayControls({
             <Label className="text-xs">{t('lock')}</Label>
             <Switch checked={locked} onCheckedChange={onLocked} />
           </div>
+          {onCompareOverlay && (
+            <div className="flex items-center justify-between">
+              <Label className="text-xs">{t('compare')}</Label>
+              <Switch checked={compareOverlay !== false} onCheckedChange={onCompareOverlay} />
+            </div>
+          )}
           {!calibrating && (
             <Button size="sm" variant="outline" className="w-full text-xs" onClick={onStartCalibrate}>
               {t('calibrate')}

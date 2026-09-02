@@ -11,7 +11,8 @@ import type { Floorplanner } from './floorplanner'
 export const floorplannerModes = {
   MOVE: 0,
   DRAW: 1,
-  DELETE: 2
+  DELETE: 2,
+  DRAW_DOOR: 3
 }
 
 // grid parameters
@@ -103,22 +104,40 @@ export class FloorplannerView {
     this.drawGrid()
     this.drawOverlay()
 
-    this.floorplan.getRooms().forEach((room) => {
-      this.drawRoom(room)
-    })
+    const compare = Boolean(this.viewmodel.overlay && this.viewmodel.compareOverlay)
+    if (!compare) {
+      this.floorplan.getRooms().forEach((room) => {
+        this.drawRoom(room)
+      })
+    }
 
     this.floorplan.getWalls().forEach((wall) => {
-      if (wall.opening) return
-      this.drawWall(wall)
+      if (wall.opening) {
+        this.drawOpening(wall)
+        return
+      }
+      this.drawWall(wall, compare)
     })
 
     this.floorplan.getCorners().forEach((corner) => {
       this.drawCorner(corner)
     })
 
-    if (this.viewmodel.mode == floorplannerModes.DRAW) {
-      this.drawTarget(this.viewmodel.targetX, this.viewmodel.targetY, this.viewmodel.lastNode)
+    if (
+      this.viewmodel.mode == floorplannerModes.DRAW ||
+      this.viewmodel.mode == floorplannerModes.DRAW_DOOR
+    ) {
+      this.drawTarget(
+        this.viewmodel.targetX,
+        this.viewmodel.targetY,
+        this.viewmodel.lastNode,
+        this.viewmodel.mode == floorplannerModes.DRAW_DOOR
+      )
     }
+
+    this.floorplan.getRooms().forEach((room) => {
+      this.drawRoomLabel(room)
+    })
 
     this.floorplan.getWalls().forEach((wall) => {
       if (wall.opening) return
@@ -180,10 +199,10 @@ export class FloorplannerView {
     }
   }
 
-  private drawWall(wall: Wall) {
+  private drawWall(wall: Wall, compare = false) {
     const hover = wall === this.viewmodel.activeWall
     const selected = wall === this.viewmodel.selectedWall
-    let color = wallColor
+    let color = compare ? '#e11d48' : wallColor
     if (hover && this.viewmodel.mode == floorplannerModes.DELETE) {
       color = deleteColor
     } else if (selected) {
@@ -191,7 +210,11 @@ export class FloorplannerView {
     } else if (hover) {
       color = wallColorHover
     }
-    const thicknessPx = Math.max(wallWidth, wall.thickness * this.viewmodel.pixelsPerCm * 0.4)
+    const thicknessPx = compare
+      ? selected || hover
+        ? 4
+        : 2.5
+      : Math.max(wallWidth, wall.thickness * this.viewmodel.pixelsPerCm * 0.4)
     const lineWidth = selected || hover ? Math.max(wallWidthHover, thicknessPx) : thicknessPx
     this.drawLine(
       this.viewmodel.convertX(wall.getStartX()),
@@ -201,10 +224,10 @@ export class FloorplannerView {
       lineWidth,
       color
     )
-    if (!hover && wall.frontEdge) {
+    if (!compare && !hover && wall.frontEdge) {
       this.drawEdge(wall.frontEdge, hover)
     }
-    if (!hover && wall.backEdge) {
+    if (!compare && !hover && wall.backEdge) {
       this.drawEdge(wall.backEdge, hover)
     }
   }
@@ -292,13 +315,31 @@ export class FloorplannerView {
     )
   }
 
+  private drawRoomLabel(room: Room) {
+    const name = room.name?.trim()
+    if (!name) return
+    const at = room.labelAnchor ?? room.getCenter2D()
+    const x = this.viewmodel.convertX(at.x)
+    const y = this.viewmodel.convertY(at.y)
+    this.context.save()
+    this.context.font = '600 13px Arial'
+    this.context.textAlign = 'center'
+    this.context.textBaseline = 'middle'
+    this.context.lineWidth = 4
+    this.context.strokeStyle = 'rgba(255,255,255,0.9)'
+    this.context.fillStyle = '#1e293b'
+    this.context.strokeText(name, x, y)
+    this.context.fillText(name, x, y)
+    this.context.restore()
+  }
+
   /** */
-  private drawTarget(x: number, y: number, lastNode: Corner | null) {
+  private drawTarget(x: number, y: number, lastNode: Corner | null, door = false) {
     this.drawCircle(
       this.viewmodel.convertX(x),
       this.viewmodel.convertY(y),
       cornerRadiusHover,
-      cornerColorHover
+      door ? '#ea580c' : cornerColorHover
     )
     if (this.viewmodel.lastNode) {
       this.drawLine(
@@ -306,29 +347,57 @@ export class FloorplannerView {
         this.viewmodel.convertY(lastNode!.y),
         this.viewmodel.convertX(x),
         this.viewmodel.convertY(y),
-        wallWidthHover,
-        wallColorHover
+        door ? 2 : wallWidthHover,
+        door ? '#ea580c' : wallColorHover,
+        door ? [8, 6] : undefined
       )
     }
   }
 
   /** */
+  private drawOpening(wall: Wall) {
+    const hover = wall === this.viewmodel.activeWall
+    const selected = wall === this.viewmodel.selectedWall
+    let color = '#94a3b8'
+    let width = 2
+    if (hover && this.viewmodel.mode == floorplannerModes.DELETE) {
+      color = deleteColor
+      width = 4
+    } else if (selected || hover) {
+      color = '#ea580c'
+      width = 4
+    }
+    this.drawLine(
+      this.viewmodel.convertX(wall.getStartX()),
+      this.viewmodel.convertY(wall.getStartY()),
+      this.viewmodel.convertX(wall.getEndX()),
+      this.viewmodel.convertY(wall.getEndY()),
+      width,
+      color,
+      [8, 6]
+    )
+  }
+
   private drawLine(
     startX: number,
     startY: number,
     endX: number,
     endY: number,
     width: number,
-    color: string
+    color: string,
+    dash?: number[]
   ) {
     // width is an integer
     // color is a hex string, i.e. #ff0000
+    this.context.save()
     this.context.beginPath()
     this.context.moveTo(startX, startY)
     this.context.lineTo(endX, endY)
     this.context.lineWidth = width
     this.context.strokeStyle = color
+    this.context.setLineDash(dash ?? [])
     this.context.stroke()
+    this.context.restore()
   }
 
   /** */

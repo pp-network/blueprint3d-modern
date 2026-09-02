@@ -10,6 +10,13 @@ export interface FloorplanOverlay {
   locked: boolean
 }
 
+export interface WorldBBox {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
 export function createOverlay(
   image: HTMLImageElement,
   centerX: number,
@@ -28,6 +35,42 @@ export function createOverlay(
     opacity: 0.55,
     locked: true
   }
+}
+
+/** Lay the image under existing walls. Reuses the last scale when possible. */
+export function createOverlayAlignedToWalls(
+  image: HTMLImageElement,
+  walls: WorldBBox,
+  options?: {
+    overallWidthCm?: number
+    prior?: OverlayTransform | null
+    opacity?: number
+    locked?: boolean
+  }
+): FloorplanOverlay {
+  const widthPx = image.naturalWidth || image.width || 1
+  const heightPx = image.naturalHeight || image.height || 1
+  const wallWidth = Math.max(1, walls.maxX - walls.minX)
+  const cx = (walls.minX + walls.maxX) / 2
+  const cy = (walls.minY + walls.maxY) / 2
+  const prior = options?.prior
+  const overlay =
+    prior && prior.cmPerImagePixel > 0
+      ? {
+          image,
+          originX: prior.originX,
+          originY: prior.originY,
+          cmPerImagePixel: prior.cmPerImagePixel,
+          opacity: options?.opacity ?? 0.55,
+          locked: options?.locked ?? true
+        }
+      : createOverlay(image, cx, cy, options?.overallWidthCm && options.overallWidthCm > 0 ? options.overallWidthCm : wallWidth)
+  if (options?.opacity != null) overlay.opacity = options.opacity
+  if (options?.locked != null) overlay.locked = options.locked
+  if (options?.overallWidthCm && options.overallWidthCm > 0) {
+    scaleOverlayToPixelWidth(overlay, widthPx, options.overallWidthCm, widthPx / 2, heightPx / 2)
+  }
+  return overlay
 }
 
 /** Scale overlay so a pixel-space width becomes realWidthCm, keeping the bbox center fixed. */

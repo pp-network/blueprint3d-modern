@@ -18,20 +18,24 @@
       "loadPlan": "Load Plan",
       "undo": "Undo",
       "redo": "Redo",
-      "exportJson": "Export JSON",
-      "importJson": "Import JSON",
+      "exportJson": "Export draw.io",
+      "importJson": "Import draw.io / JSON",
       "unsaved": "Unsaved",
-      "exportSuccess": "JSON exported",
+      "exportSuccess": "Exported draw.io XML",
       "importSuccess": "Floor plan imported",
-      "importError": "Invalid JSON — need floorplan and items"
+      "importError": "Invalid file. Use draw.io / XML, or JSON with floorplan"
     },
     "howTo": {
-      "steps": "Import a plan image or pick a template → draw walls and furniture → export JSON"
+      "steps": "Import a plan image or pick a template → draw walls and furniture → export draw.io"
     },
     "viewer": {
       "zoomIn": "Zoom in",
       "zoomOut": "Zoom out",
       "resetView": "Reset view"
+    },
+    "minimap": {
+      "title": "Floor plan",
+      "hint": "Click a room to stand in it"
     },
     "wallThickness": {
       "title": "Wall thickness"
@@ -42,8 +46,10 @@
       "clear": "Clear overlay",
       "clearWalls": "Clear sample walls",
       "clearWallsSuccess": "Walls cleared. Trace over the overlay.",
-      "hint": "Enter overall width in mm, then import. If an API key is set, AI extracts the outer walls first. You can still edit.",
-      "importSuccess": "Overlay imported. Detecting walls…",
+      "hint": "Enter overall width in mm, then import the plan. Importing only changes the image. Click AI detect if you want new walls.",
+      "importSuccess": "Overlay imported. Click AI detect if you need walls.",
+      "importKeepWalls": "Overlay placed under your walls. Nothing was replaced. Detect again only if you want new walls.",
+      "detectReplaceConfirm": "Detecting again will replace the walls you already edited. Continue?",
       "importError": "Could not read that image. Use PNG or JPG.",
       "overallWidth": "Overall width",
       "detect": "Local detect",
@@ -58,11 +64,21 @@
       "streamOutput": "Output",
       "streamWaiting": "Waiting for the model to start thinking in Chinese…",
       "streamFindings": "Reading notes",
-      "detectSuccess": "Found {count} walls. Edit or calibrate if needed.",
+      "detectSuccess": "Found {count} walls. Check them in 2D; doors and windows appear when you switch to 3D.",
+      "detectDump": "Investigation dump written to {path}",
+      "detectSuccessPlaced": "Found {count} walls, placed {furniture} furnishings, {doors} doors, {windows} windows",
+      "generateFurnishings": "Generate furniture",
+      "generating": "Generating furniture…",
+      "generateNeedWalls": "Detect or draw walls first",
+      "generateNeedFindings": "No furniture or openings were read. Run AI wall detect first.",
+      "generateSuccess": "Placed {furniture} furnishings, {doors} doors, {windows} windows",
+      "openingsOn3d": "Placed {doors} doors and {windows} windows in the openings",
+      "generateError": "Could not generate furniture. Try again.",
       "detectFallback": "AI timed out. Showing {count} locally detected walls — edit against the overlay.",
       "detectEmpty": "No walls found. Try a cleaner CAD export or AI detect.",
       "detectError": "Wall detection failed. Try another image or draw by hand.",
-      "opacity": "Opacity",
+      "opacity": "Overlay opacity",
+      "compare": "Trace over plan",
       "lock": "Lock overlay",
       "calibrate": "Two-point scale",
       "calibrateHint": "Click both ends of a known length",
@@ -74,10 +90,12 @@
     "floorplanner": {
       "moveWalls": "Move Walls",
       "drawWalls": "Draw Walls",
-      "deleteWalls": "Delete Walls",
+      "drawDoors": "Draw Door",
+      "deleteWalls": "Delete Walls & Doors",
       "done": "Done",
       "undoLast": "Undo last",
-      "escHint": "Esc stops drawing. Backspace or ⌘Z undoes the last step."
+      "escHint": "Esc stops drawing. Backspace or ⌘Z undoes the last step.",
+      "doorHint": "Same as walls: click a start point, then a straight line to the end. Drag a door vertex without moving the wall. Esc stops drawing."
     },
     "viewToggle": {
       "3d": "3D",
@@ -85,7 +103,11 @@
     },
     "textureSelector": {
       "adjustFloor": "Adjust Floor",
-      "adjustWall": "Adjust Wall"
+      "adjustWall": "Adjust Wall",
+      "applyAllHint": "Click a swatch to apply it to every wall or floor",
+      "openWall": "Walls",
+      "openFloor": "Floor",
+      "close": "Close"
     },
     "myFloorplans": {
       "title": "My Saved Floorplans",

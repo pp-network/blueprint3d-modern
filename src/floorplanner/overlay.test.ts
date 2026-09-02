@@ -1,4 +1,10 @@
-import { applyCalibration, copyOverlayTransform, createOverlay, restoreOverlayTransform } from './overlay'
+import {
+  applyCalibration,
+  copyOverlayTransform,
+  createOverlay,
+  createOverlayAlignedToWalls,
+  restoreOverlayTransform
+} from './overlay'
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg)
@@ -19,5 +25,13 @@ restoreOverlayTransform(overlay, before)
 assert(Math.abs(overlay.cmPerImagePixel - before.cmPerImagePixel) < 1e-9, 'undo calibration scale')
 assert(Math.abs(overlay.originX - before.originX) < 1e-9, 'undo calibration origin x')
 assert(Math.abs(overlay.originY - before.originY) < 1e-9, 'undo calibration origin y')
+
+const aligned = createOverlayAlignedToWalls(image, { minX: -100, minY: -50, maxX: 100, maxY: 50 }, { prior: before })
+assert(Math.abs(aligned.originX - before.originX) < 1e-9, 'keep prior origin')
+assert(Math.abs(aligned.cmPerImagePixel - before.cmPerImagePixel) < 1e-9, 'keep prior scale')
+
+const fitted = createOverlayAlignedToWalls(image, { minX: 0, minY: 0, maxX: 1867, maxY: 900 }, { overallWidthCm: 1867 })
+assert(Math.abs(fitted.cmPerImagePixel - 1867 / 4000) < 1e-6, 'fit overlay to overall width')
+assert(Math.abs(fitted.originX + fitted.cmPerImagePixel * 2000 - 933.5) < 1e-6, 'centered on walls after width')
 
 console.log('overlay.test ok')

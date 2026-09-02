@@ -1,18 +1,23 @@
 import {
   aiWallsToTrace,
   aiWallsToTracePartial,
-  extractFloorplanFindings,
+  critiqueFromOutput,
   formatFindingsZh,
   type AiWallsPayload,
+  type FloorplanPlacements,
   type PartialAiWalls
 } from '@blueprint3d/vision/ai-walls-schema'
+import { collectFloorplanFindings, collectFloorplanPlacements } from '@blueprint3d/vision/extract-thinking-findings'
 import { localizeThinkingZh } from '@blueprint3d/vision/localize-thinking'
 import {
+  complementThickInkFromImage,
   constrainTraceToImage,
   dropCabinetLikeWalls,
-  mergeMissedInkWalls
+  dropThinDimensionWallsFromImage,
+  shouldKeepInkConstrained,
+  snapTraceToImage
 } from '@blueprint3d/vision/constrain-ink'
-import { traceWallsFromImage } from '@blueprint3d/vision/trace-walls'
+import { finishWallTrace } from '@blueprint3d/vision/finish-trace'
 import type { WallTrace } from '@blueprint3d/vision/types'
 import { encodePlanImage } from '@/lib/plan-image'
 
@@ -21,7 +26,7 @@ export async function fetchAiWallsConfigured(): Promise<{
   model: string | null
 }> {
   try {
-    const res = await fetch('/api/ai/walls', { method: 'GET' })
+    const res = await fetch('/api/ai/config', { method: 'GET' })
     if (!res.ok) {
       return { configured: false, model: null }
     }
@@ -45,18 +50,26 @@ export interface AiWallsStream {
   output?: string
   status?: string
   findings?: string
+  placements?: FloorplanPlacements | null
 }
 
 export async function detectWallsWithAi(
   image: HTMLImageElement,
   overallWidthMm?: number,
   onPartial?: (trace: WallTrace, progress: AiWallsProgress) => void,
-  onStream?: (stream: AiWallsStream) => void
-): Promise<WallTrace> {
+  onStream?: (stream: AiWallsStream) => void,
+  signal?: AbortSignal
+): Promise<{ trace: WallTrace; placements: FloorplanPlacements | null; dumpPath?: string }> {
   const encoded = encodePlanImage(image)
   const destW = image.naturalWidth || image.width
   const destH = image.naturalHeight || image.height
   const controller = new AbortController()
+  const onAbort = () => controller.abort()
+  if (signal?.aborted) {
+    controller.abort()
+  } else {
+    signal?.addEventListener('abort', onAbort, { once: true })
+  }
   const timer = window.setTimeout(() => controller.abort(), AI_WALLS_CLIENT_TIMEOUT_MS)
   try {
     let res: Response
@@ -89,12 +102,20 @@ export async function detectWallsWithAi(
       if (!res.ok || !data.payload) {
         throw new Error(data.error || 'AI 认墙失败')
       }
-      return refineAiTrace(aiWallsToTrace(data.payload, destW, destH), image, true)
+      return {
+        trace: refineAiTrace(aiWallsToTrace(data.payload, destW, destH), image),
+        placements: collectFloorplanPlacements({ payloadJson: JSON.stringify(data.payload) })
+      }
     }
 
     let finalPayload: AiWallsPayload | null = null
+    let lastPreview: WallTrace | null = null
     let lastTrace: WallTrace | null = null
     let lastError: string | null = null
+    let lastPlacements: FloorplanPlacements | null = null
+    let lastThinking = ''
+    let lastOutput = ''
+    let dumpPath: string | undefined
     for await (const event of readSse(res)) {
       if (event.event === 'partial' || event.event === 'done') {
         const payload = (event.data.payload ?? event.data) as PartialAiWalls
@@ -108,7 +129,12 @@ export async function detectWallsWithAi(
           console.warn('AI walls parse skipped:', error)
         }
         if (trace && (payload.complete || payload.outerLoop.length >= 4)) {
-          const refined = refineAiTrace(trace, image, false)
+          const refined = payload.complete
+            ? lastPreview
+              ? finishWallTrace(lastPreview, refineAiTrace(trace, image, { complement: false }))
+              : refineAiTrace(trace, image)
+            : refineAiTrace(trace, image)
+          if (!payload.complete) lastPreview = refined
           lastTrace = refined
           onPartial?.(refined, {
             outer: payload.outerLoop.length,
@@ -118,15 +144,43 @@ export async function detectWallsWithAi(
         }
         if (event.event === 'done' || payload.complete) {
           finalPayload = payload
+          lastPlacements =
+            collectFloorplanPlacements({
+              payloadJson: JSON.stringify(payload),
+              output: lastOutput,
+              thinking: lastThinking
+            }) ?? lastPlacements
+          if (typeof event.data.dumpPath === 'string') {
+            dumpPath = event.data.dumpPath
+          }
         }
       } else if (event.event === 'thinking') {
-        onStream?.({ thinking: localizeThinkingZh(String(event.data.text ?? '')) })
-      } else if (event.event === 'output') {
-        const output = String(event.data.text ?? '')
-        const findings = extractFloorplanFindings(output)
+        lastThinking = String(event.data.text ?? '')
+        const placements = collectFloorplanPlacements({
+          output: lastOutput,
+          thinking: lastThinking
+        })
+        if (placements) lastPlacements = placements
+        const findings = collectFloorplanFindings({ output: lastOutput, thinking: lastThinking })
+        const notes = critiqueFromOutput(lastOutput, placements)
         onStream?.({
-          output,
-          findings: findings ? formatFindingsZh(findings) : undefined
+          thinking: localizeThinkingZh(lastThinking),
+          findings: findings ? formatFindingsZh(findings, notes) : undefined,
+          placements
+        })
+      } else if (event.event === 'output') {
+        lastOutput = String(event.data.text ?? '')
+        const placements = collectFloorplanPlacements({
+          output: lastOutput,
+          thinking: lastThinking
+        })
+        if (placements) lastPlacements = placements
+        const findings = collectFloorplanFindings({ output: lastOutput, thinking: lastThinking })
+        const notes = critiqueFromOutput(lastOutput, placements)
+        onStream?.({
+          output: lastOutput,
+          findings: findings ? formatFindingsZh(findings, notes) : undefined,
+          placements
         })
       } else if (event.event === 'status') {
         onStream?.({ status: String(event.data.message ?? '') })
@@ -134,42 +188,72 @@ export async function detectWallsWithAi(
         lastError = String(event.data.error || 'AI 认墙失败')
       }
     }
+    const placements =
+      lastPlacements ??
+      collectFloorplanPlacements({
+        payloadJson: JSON.stringify(finalPayload ?? {}),
+        output: lastOutput,
+        thinking: lastThinking
+      })
+    if (lastTrace) {
+      return { trace: lastTrace, placements, dumpPath }
+    }
     if (finalPayload) {
       try {
-        return refineAiTrace(aiWallsToTrace(finalPayload, destW, destH), image, true)
+        const finished = refineAiTrace(aiWallsToTrace(finalPayload, destW, destH), image)
+        return {
+          trace: finishWallTrace(lastPreview, finished),
+          placements,
+          dumpPath
+        }
       } catch (error) {
         console.warn('AI walls refine failed, using raw result:', error)
-        return lastTrace ?? aiWallsToTrace(finalPayload, destW, destH)
+        return {
+          trace: lastPreview ?? aiWallsToTrace(finalPayload, destW, destH),
+          placements,
+          dumpPath
+        }
       }
-    }
-    if (lastTrace) {
-      return lastTrace
     }
     throw new Error(lastError || 'AI 认墙失败')
   } finally {
     window.clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
 }
 
-function refineAiTrace(trace: WallTrace, image: HTMLImageElement, mergeMissed: boolean): WallTrace {
+function refineAiTrace(
+  trace: WallTrace,
+  image: HTMLImageElement,
+  options?: { complement?: boolean }
+): WallTrace {
   let used = dropCabinetLikeWalls(trace)
   try {
+    used = snapTraceToImage(used, image)
+  } catch (error) {
+    console.warn('Ink snap skipped:', error)
+  }
+  try {
     const grounded = constrainTraceToImage(used, image)
-    const outerOk = (grounded.outerCount ?? 0) >= Math.min(4, used.outerCount ?? 0)
-    const ratio = grounded.segments.length / Math.max(1, used.segments.length)
-    if (outerOk && ratio >= 0.35) {
+    if (shouldKeepInkConstrained(used, grounded)) {
       used = dropCabinetLikeWalls(grounded)
     }
   } catch (error) {
     console.warn('Ink constrain skipped:', error)
   }
-  if (!mergeMissed) return used
-  try {
-    return dropCabinetLikeWalls(mergeMissedInkWalls(used, traceWallsFromImage(image)))
-  } catch (error) {
-    console.warn('Missed-ink merge skipped:', error)
-    return used
+  if (options?.complement !== false) {
+    try {
+      used = complementThickInkFromImage(used, image)
+    } catch (error) {
+      console.warn('Local ink complement skipped:', error)
+    }
   }
+  try {
+    used = dropThinDimensionWallsFromImage(used, image)
+  } catch (error) {
+    console.warn('Thin-dimension drop skipped:', error)
+  }
+  return used
 }
 
 async function* readSse(res: Response): AsyncGenerator<{ event: string; data: Record<string, unknown> }> {

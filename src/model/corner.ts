@@ -25,6 +25,9 @@ export class Corner implements Point {
   /** Callbacks to be fired in case of action. */
   private action_callbacks = new EventEmitter<unknown>()
 
+  /** When true, auto-close door gaps will not pair this dangling jamb. */
+  public keepOpen = false
+
   /** Constructs a corner.
    * @param floorplan The associated floorplan.
    * @param x X coordinate.
@@ -135,10 +138,12 @@ export class Corner implements Point {
    * @param newX The new x position.
    * @param newY The new y position.
    */
-  public move(newX: number, newY: number): void {
+  public move(newX: number, newY: number, options?: { merge?: boolean }): void {
     this.x = newX
     this.y = newY
-    this.mergeWithIntersected()
+    if (options?.merge !== false) {
+      this.mergeWithIntersected()
+    }
     this.moved_callbacks.fire(this.x, this.y)
 
     this.wallStarts.forEach((wall) => {

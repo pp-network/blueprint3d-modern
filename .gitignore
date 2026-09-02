@@ -137,3 +137,17 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# AI wall-detect dumps (local investigation)
+tmp/ai-detect/*.json
+
+# Third-party Sweet Home 3D sources (local reference only)
+tmp/sweethome3d-7.7-online/
+
+# Third-party floorplan AI research clones
+tmp/Floor-Plan/
+tmp/dwg-bim_AI/
+tmp/Structify-AI/
+tmp/mitunet/
+tmp/Arc/
+tmp/arc-image-identifier/

@@ -22,6 +22,12 @@ const defaultRoomTexture = {
  * A Room is the combination of a Floorplan with a floor plane.
  */
 export class Room {
+  /** Label from the drawing, or a generated fallback. */
+  public name = ''
+
+  /** World-cm point to draw the name; usually the OCR label, not the polygon centroid. */
+  public labelAnchor: { x: number; y: number } | null = null
+
   /** */
   public interiorCorners: { x: number; y: number }[] = []
 
@@ -45,6 +51,49 @@ export class Room {
     this.updateWalls()
     this.updateInteriorCorners()
     this.generatePlane()
+  }
+
+  public getCenter2D(): { x: number; y: number } {
+    const corners = this.interiorCorners
+    if (corners.length === 0) {
+      return { x: 0, y: 0 }
+    }
+    let x = 0
+    let y = 0
+    for (const corner of corners) {
+      x += corner.x
+      y += corner.y
+    }
+    return { x: x / corners.length, y: y / corners.length }
+  }
+
+  public getArea(): number {
+    const corners = this.interiorCorners
+    let area = 0
+    for (let i = 0; i < corners.length; i++) {
+      const a = corners[i]
+      const b = corners[(i + 1) % corners.length]
+      area += a.x * b.y - b.x * a.y
+    }
+    return Math.abs(area) / 2
+  }
+
+  public getLongAxis(): { x: number; y: number } {
+    const corners = this.interiorCorners
+    let best = { x: 1, y: 0 }
+    let bestLen = 0
+    for (let i = 0; i < corners.length; i++) {
+      const a = corners[i]
+      const b = corners[(i + 1) % corners.length]
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const len = Math.hypot(dx, dy)
+      if (len > bestLen) {
+        bestLen = len
+        best = { x: dx / len, y: dy / len }
+      }
+    }
+    return best
   }
 
   public getUuid(): string {
@@ -85,11 +134,13 @@ export class Room {
     this.floorPlane = new THREE.Mesh(
       geometry,
       new THREE.MeshBasicMaterial({
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        colorWrite: false
       })
     )
     this.floorPlane.visible = false
     this.floorPlane.rotation.set(Math.PI / 2, 0, 0)
+    this.floorPlane.position.y = -0.4
     ;(<any>this.floorPlane).room = this // js monkey patch
   }
 

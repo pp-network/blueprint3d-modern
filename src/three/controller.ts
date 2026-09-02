@@ -156,7 +156,7 @@ export class Controller {
       }
 
       // check floors
-      const floorPlanes = (this.model.floorplan as any).floorPlanes()
+      const floorPlanes = this.model.floorplan.floorPlanes()
       const floorIntersects = this.getIntersections(this.mouse, floorPlanes, false)
       if (floorIntersects.length > 0) {
         const room = (floorIntersects[0].object as any).room
@@ -425,7 +425,7 @@ export class Controller {
     const customIntersections = item.customIntersectionPlanes()
     if (customIntersections && customIntersections.length > 0) {
       const intersections = this.getIntersections(vec2, customIntersections, true)
-      return intersections[0] ?? null
+      if (intersections[0]) return intersections[0]
     }
     const raycaster = this.rayFromMouse(vec2)
     const hit = new THREE.Vector3()

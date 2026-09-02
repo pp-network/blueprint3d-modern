@@ -1,6 +1,7 @@
 import { AI_WALLS_SYSTEM_PROMPT, AI_WALLS_USER_PROMPT } from '@blueprint3d/vision/ai-walls-prompt'
 import {
   AiWallsValidationError,
+  alignPayloadToImage,
   extractJsonObject,
   extractPartialAiWalls,
   parseAiWallsPayload,
@@ -8,6 +9,7 @@ import {
 } from '@blueprint3d/vision/ai-walls-schema'
 import { resolveAiConfig } from '@/lib/ai-config'
 import { detectWallsJsonWithCursor } from '@/lib/cursor-walls'
+import { saveDetectDump } from '@/lib/save-detect-dump'
 
 export const maxDuration = 630
 
@@ -85,17 +87,14 @@ export async function POST(request: Request) {
       const sendThinking = throttle('thinking', 160)
       const sendOutput = throttle('output', 120)
       const align = (partial: PartialAiWalls): PartialAiWalls => {
-        if (body.width && body.height) {
-          const widthRatio = Math.abs(partial.imageWidth - body.width) / body.width
-          const heightRatio = Math.abs(partial.imageHeight - body.height) / body.height
-          if (widthRatio > 0.25 || heightRatio > 0.25) {
-            return { ...partial, imageWidth: body.width, imageHeight: body.height }
-          }
-        }
-        return partial
+        const aligned = alignPayloadToImage(partial, body.width, body.height)
+        return { ...partial, ...aligned }
       }
       const startedAt = Date.now()
       let awaitingFirstToken = true
+      let thinkingText = ''
+      let outputText = ''
+      const modelName = cfg.provider === 'cursor' ? cfg.cursorModel : cfg.openaiModel
       const keepAlive = setInterval(() => {
         const seconds = Math.round((Date.now() - startedAt) / 1000)
         try {
@@ -108,7 +107,7 @@ export async function POST(request: Request) {
         }
       }, 3000)
       try {
-        send('status', { message: `模型 ${cfg.provider === 'cursor' ? cfg.cursorModel : cfg.openaiModel} 开始认墙` })
+        send('status', { message: `模型 ${modelName} 开始认墙` })
         const content =
           cfg.provider === 'cursor'
             ? await detectWallsJsonWithCursor({
@@ -117,13 +116,17 @@ export async function POST(request: Request) {
                 imageBase64,
                 mimeType,
                 overallWidthMm: body.overallWidthMm,
+                imageWidth: body.width,
+                imageHeight: body.height,
                 onPartial: (partial) => send('partial', { payload: align(partial) }),
                 onThinking: (text) => {
                   awaitingFirstToken = false
+                  thinkingText = text
                   sendThinking({ text })
                 },
                 onOutput: (text) => {
                   awaitingFirstToken = false
+                  outputText = text
                   sendOutput({ text })
                 },
                 onStatus: (message) => send('status', { message })
@@ -135,20 +138,38 @@ export async function POST(request: Request) {
                 imageBase64,
                 mimeType,
                 overallWidthMm: body.overallWidthMm,
+                imageWidth: body.width,
+                imageHeight: body.height,
                 onDelta: (text) => {
+                  outputText = text
                   sendOutput({ text })
                   const partial = extractPartialAiWalls(text)
                   if (partial) send('partial', { payload: align(partial) })
                 }
               })
+        outputText = content || outputText
         const payload = align({
           ...parseAiWallsPayload(extractJsonObject(content)),
           closeLoop: true,
           complete: true
         })
+        const dump = await saveDetectDump(
+          {
+            provider: cfg.provider,
+            model: modelName,
+            overallWidthMm: body.overallWidthMm,
+            imageWidth: body.width,
+            imageHeight: body.height,
+            mimeType,
+            thinking: thinkingText,
+            rawOutput: content,
+            payload
+          },
+          { imageBase64 }
+        )
         sendThinking.flush()
         sendOutput.flush()
-        send('done', { payload })
+        send('done', { payload, dumpPath: dump?.latest ?? dump?.file })
       } catch (error) {
         const message =
           error instanceof AiWallsValidationError
@@ -157,6 +178,17 @@ export async function POST(request: Request) {
               ? error.message
               : '认墙失败'
         console.error('AI walls failed:', error)
+        await saveDetectDump({
+          provider: cfg.provider,
+          model: modelName,
+          overallWidthMm: body.overallWidthMm,
+          imageWidth: body.width,
+          imageHeight: body.height,
+          mimeType,
+          thinking: thinkingText,
+          rawOutput: outputText,
+          error: message
+        })
         send('error', { error: message })
       } finally {
         clearInterval(keepAlive)
@@ -182,6 +214,8 @@ async function detectWallsJsonWithOpenAi(opts: {
   imageBase64: string
   mimeType: string
   overallWidthMm?: number
+  imageWidth?: number
+  imageHeight?: number
   onDelta?: (text: string) => void
 }): Promise<string> {
   const response = await fetch(`${opts.baseUrl}/chat/completions`, {
@@ -199,7 +233,13 @@ async function detectWallsJsonWithOpenAi(opts: {
         {
           role: 'user',
           content: [
-            { type: 'text', text: AI_WALLS_USER_PROMPT(opts.overallWidthMm) },
+            {
+              type: 'text',
+              text: AI_WALLS_USER_PROMPT(opts.overallWidthMm, {
+                width: opts.imageWidth,
+                height: opts.imageHeight
+              })
+            },
             {
               type: 'image_url',
               image_url: {

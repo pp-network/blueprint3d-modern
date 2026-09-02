@@ -18,20 +18,24 @@
       "loadPlan": "加载方案",
       "undo": "撤销",
       "redo": "重做",
-      "exportJson": "导出 JSON",
-      "importJson": "导入 JSON",
+      "exportJson": "导出 draw.io",
+      "importJson": "导入 draw.io / JSON",
       "unsaved": "未保存",
-      "exportSuccess": "已导出 JSON",
+      "exportSuccess": "已导出 draw.io XML",
       "importSuccess": "已导入方案",
-      "importError": "JSON 格式不对，需要包含 floorplan 和 items"
+      "importError": "文件格式不对。请用 draw.io / XML，或包含 floorplan 的 JSON"
     },
     "howTo": {
-      "steps": "导入户型图或选模板 → 画墙摆家具 → 导出 JSON"
+      "steps": "导入户型图或选模板 → 画墙摆家具 → 导出 draw.io"
     },
     "viewer": {
       "zoomIn": "放大",
       "zoomOut": "缩小",
       "resetView": "复位视角"
+    },
+    "minimap": {
+      "title": "平面缩略图",
+      "hint": "点击房间进入该房间的落脚点"
     },
     "wallThickness": {
       "title": "墙厚"
@@ -42,8 +46,10 @@
       "clear": "清除底图",
       "clearWalls": "清空示例墙体",
       "clearWallsSuccess": "已清空墙体，可以按底图描墙",
-      "hint": "先填图纸总宽（毫米），再导入。已配置 API Key 时优先用 AI 认外墙；结果可手改。",
-      "importSuccess": "底图已导入，正在认墙。",
+      "hint": "先填图纸总宽（毫米），再导入底图。导入只换图，不会改墙。要重画墙请自己点「AI 认墙」。",
+      "importSuccess": "底图已导入。没有墙时请点「AI 认墙」。",
+      "importKeepWalls": "底图已铺在现有墙体下，没有改动你的墙。可对照修正；只有点「AI 认墙」才会覆盖。",
+      "detectReplaceConfirm": "重新认墙会覆盖你改过的墙体。确定继续？",
       "importError": "无法读取这张图片，请改用 PNG 或 JPG",
       "overallWidth": "图纸总宽",
       "detect": "本地识别",
@@ -58,11 +64,21 @@
       "streamOutput": "输出过程",
       "streamWaiting": "等待模型开始用中文思考…",
       "streamFindings": "读图信息",
-      "detectSuccess": "识别到 {count} 面墙，可再手改或两点校准",
+      "detectSuccess": "识别到 {count} 面墙。请先在 2D 核对，切到 3D 后门窗会自动放上",
+      "detectDump": "调查底稿已写入 {path}",
+      "detectSuccessPlaced": "识别到 {count} 面墙，已摆入 {furniture} 件家具、{doors} 扇门、{windows} 扇窗",
+      "generateFurnishings": "一键生成家具",
+      "generating": "正在生成家具…",
+      "generateNeedWalls": "请先识别或画好墙体",
+      "generateNeedFindings": "没有读到家具和门窗。请先用 AI 认墙，再生成",
+      "generateSuccess": "已生成 {furniture} 件家具、{doors} 扇门、{windows} 扇窗",
+      "openingsOn3d": "已在门洞放入 {doors} 扇门、{windows} 扇窗",
+      "generateError": "生成家具失败，请再试一次",
       "detectFallback": "AI 超时。已先用本地识别画出 {count} 面墙，请对照底图手改",
       "detectEmpty": "没有识别到墙。请换更清晰的 CAD 图，或改用 AI 认墙",
       "detectError": "认墙失败，请换一张图或改为手绘",
-      "opacity": "透明度",
+      "opacity": "底图透明度",
+      "compare": "对照描线",
       "lock": "锁定底图",
       "calibrate": "两点校准",
       "calibrateHint": "在图上点已知长度的两端，例如总宽 18670mm 的两端",
@@ -74,10 +90,12 @@
     "floorplanner": {
       "moveWalls": "移动墙体",
       "drawWalls": "绘制墙体",
-      "deleteWalls": "删除墙体",
+      "drawDoors": "绘制门",
+      "deleteWalls": "删除墙/门",
       "done": "完成",
       "undoLast": "撤销上一步",
-      "escHint": "Esc 停止绘制；Backspace 或 ⌘Z 撤销上一步"
+      "escHint": "Esc 停止绘制；Backspace 或 ⌘Z 撤销上一步",
+      "doorHint": "和画墙一样：先点一个点，再拉一条直线到终点。拖门的顶点只会动门，墙不会跟着走。Esc 停止绘制。"
     },
     "viewToggle": {
       "3d": "3D",
@@ -85,7 +103,11 @@
     },
     "textureSelector": {
       "adjustFloor": "调整地板",
-      "adjustWall": "调整墙面"
+      "adjustWall": "调整墙面",
+      "applyAllHint": "点击色块，应用到全部墙面或地板",
+      "openWall": "墙面",
+      "openFloor": "地板",
+      "close": "关闭"
     },
     "myFloorplans": {
       "title": "我保存的平面图",

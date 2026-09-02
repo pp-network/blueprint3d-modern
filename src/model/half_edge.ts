@@ -133,6 +133,13 @@ export class HalfEdge {
       v4.z
     ])
 
+    if (positions.some((n) => !Number.isFinite(n))) {
+      this.plane = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial())
+      this.plane.visible = false
+      ;(this.plane as any).edge = this
+      return
+    }
+
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geometry.computeVertexNormals()
     geometry.computeBoundingBox()
@@ -324,20 +331,36 @@ export class HalfEdge {
     // rotate v2
     const v2dx = v2endX - v2startX
     const v2dy = v2endY - v2startY
+    const edgeLen = Utils.distance(0, 0, v2dx, v2dy)
+    if (edgeLen < 1e-6 || !Number.isFinite(sn) || Math.abs(sn) < 1e-6) {
+      if (edgeLen < 1e-6) return { x: 0, y: 0 }
+      return {
+        x: (-v2dy / edgeLen) * this.offset,
+        y: (v2dx / edgeLen) * this.offset
+      }
+    }
 
     const vx = v2dx * cs - v2dy * sn
     const vy = v2dx * sn + v2dy * cs
 
-    // normalize
     const mag = Utils.distance(0, 0, vx, vy)
-    const desiredMag = this.offset / sn
-    const scalar = desiredMag / mag
+    if (mag < 1e-6) {
+      return {
+        x: (-v2dy / edgeLen) * this.offset,
+        y: (v2dx / edgeLen) * this.offset
+      }
+    }
+    const scalar = this.offset / sn / mag
+    if (!Number.isFinite(scalar)) {
+      return {
+        x: (-v2dy / edgeLen) * this.offset,
+        y: (v2dx / edgeLen) * this.offset
+      }
+    }
 
-    const halfAngleVector = {
+    return {
       x: vx * scalar,
       y: vy * scalar
     }
-
-    return halfAngleVector
   }
 }

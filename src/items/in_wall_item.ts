@@ -20,7 +20,17 @@ export class InWallItem extends WallItem {
 
   /** */
   public getWallOffset() {
+    if (!this.currentWallEdge) return 0.5
     // fudge factor so it saves to the right wall
-    return -this.currentWallEdge!.offset + 0.5
+    return -this.currentWallEdge.offset + 0.5
+  }
+
+  public customIntersectionPlanes(): THREE.Mesh[] {
+    return [...this.model.floorplan.wallEdgePlanes(), ...this.model.floorplan.floorPlanes()]
+  }
+
+  public clickReleased() {
+    super.clickReleased()
+    this.commitToWallOrOpening()
   }
 }

@@ -383,6 +383,51 @@ export class Main {
     this.controls.update()
   }
 
+  public goToRoom(room: Room): void {
+    const center = room.getCenter2D()
+    const look = room.getLongAxis()
+    const span = Math.max(room.getArea(), 400)
+    const back = Math.min(120, Math.max(36, Math.sqrt(span) * 0.35))
+    const eye = 155
+    this.viewMode = '3d'
+    this.controls.noRotate = false
+    this.controls.maxPolarAngle = Math.PI * 0.48
+    this.controls.minPolarAngle = 0
+    const from = {
+      x: center.x - look.x * back,
+      y: eye,
+      z: center.y - look.y * back
+    }
+    const at = {
+      x: center.x + look.x * 50,
+      y: 110,
+      z: center.y + look.y * 50
+    }
+    animate(this.camera.position, {
+      x: from.x,
+      y: from.y,
+      z: from.z,
+      duration: 700,
+      ease: 'inOut(2)',
+      onUpdate: () => {
+        this.controls.update()
+        this._needsUpdate = true
+      }
+    })
+    animate(this.controls.target, {
+      x: at.x,
+      y: at.y,
+      z: at.z,
+      duration: 700,
+      ease: 'inOut(2)',
+      onUpdate: () => {
+        this.controls.update()
+        this._needsUpdate = true
+      }
+    })
+    this._needsUpdate = true
+  }
+
   // projects the object's center point into x,y screen coords
   // x,y are relative to top left corner of viewer
   public projectVector(vec3: THREE.Vector3, ignoreMargin?: boolean): THREE.Vector2 {

@@ -17,5 +17,8 @@ export interface Metadata {
 
   /** Description of the item for AI understanding */
   description?: string
+
+  /** Placed by wall/furniture detect, not by the catalog drawer. */
+  autoPlaced?: boolean
 }
 

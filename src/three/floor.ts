@@ -38,30 +38,38 @@ export class Floor {
     floorTexture.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     floorTexture.minFilter = THREE.LinearMipmapLinearFilter
     floorTexture.magFilter = THREE.LinearFilter
-    const floorMaterialTop = new THREE.MeshPhongMaterial({
+    const floorMaterialTop = new THREE.MeshLambertMaterial({
       map: floorTexture,
       side: THREE.DoubleSide,
-      color: 0xf0e2c8,
-      specular: 0x222222,
-      shininess: 8
+      color: 0xffffff,
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1
     })
 
     const textureScale = textureSettings.scale
-    // http://stackoverflow.com/questions/19182298/how-to-texture-a-three-js-mesh-created-with-shapegeometry
-    // scale down coords to fit 0 -> 1, then rescale
-
     const points: THREE.Vector2[] = []
-    this.room.interiorCorners.forEach((corner) => {
+    this.room.interiorCorners.forEach((corner, i, all) => {
+      const prev = all[(i + all.length - 1) % all.length]
+      if (Math.hypot(corner.x - prev.x, corner.y - prev.y) < 0.8) {
+        return
+      }
       points.push(new THREE.Vector2(corner.x / textureScale, corner.y / textureScale))
     })
     const shape = new THREE.Shape(points)
-
     const geometry = new THREE.ShapeGeometry(shape)
+    const pos = geometry.getAttribute('position')
+    const normals = new Float32Array(pos.count * 3)
+    for (let i = 0; i < pos.count; i++) {
+      normals[i * 3 + 2] = 1
+    }
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
 
     const floor = new THREE.Mesh(geometry, floorMaterialTop)
 
     floor.rotation.set(Math.PI / 2, 0, 0)
     floor.scale.set(textureScale, textureScale, textureScale)
+    floor.position.y = 0.15
     floor.receiveShadow = true
     floor.castShadow = false
     return floor

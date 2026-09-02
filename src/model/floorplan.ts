@@ -9,6 +9,26 @@ import { findDoorGapPairs, type DoorGapCorner } from './door-gaps'
 
 export type FloorTexture = { url: string; scale: number }
 export type WallTexture = { url: string; stretch: boolean; scale: number }
+export interface DetectedLabel {
+  name: string
+  x: number
+  y: number
+  kind?: string
+}
+
+export interface DetectTransform {
+  originX: number
+  originY: number
+  cmPerImagePixel: number
+}
+
+export interface DetectedPlacements {
+  overallWidthMm?: number
+  rooms: DetectedLabel[]
+  furniture: DetectedLabel[]
+  openings: DetectedLabel[]
+}
+
 export interface SavedFloorplan {
   corners: Record<string, { x: number; y: number }>
   walls: Array<{
@@ -22,6 +42,9 @@ export interface SavedFloorplan {
   wallTextures?: unknown[]
   floorTextures?: Record<string, FloorTexture>
   newFloorTextures?: Record<string, FloorTexture>
+  roomLabels?: DetectedLabel[]
+  detectTransform?: DetectTransform
+  detectedPlacements?: DetectedPlacements
 }
 
 /** */
@@ -63,6 +86,11 @@ export class Floorplan {
    */
   private floorTextures: Record<string, FloorTexture> = {}
 
+  /** World-cm labels from the drawing; reapplied whenever rooms are rebuilt. */
+  public roomLabels: DetectedLabel[] = []
+  public detectTransform: DetectTransform | null = null
+  public detectedPlacements: DetectedPlacements | null = null
+
   /** Constructs a floorplan. */
   constructor() {}
 
@@ -99,8 +127,7 @@ export class Floorplan {
     return planes
   }
 
-  // @ts-ignore - floorPlanes is declared but not used, keeping for future use
-  private floorPlanes(): THREE.Mesh[] {
+  public floorPlanes(): THREE.Mesh[] {
     return Utils.map(this.rooms, (room: Room) => room.floorPlane).filter(
       (plane): plane is THREE.Mesh => plane !== null
     )
@@ -208,13 +235,23 @@ export class Floorplan {
 
   public overlappedWall(x: number, y: number, tolerance?: number): Wall | null {
     tolerance = tolerance || defaultFloorPlanTolerance
-    for (let i = 0; i < this.walls.length; i++) {
-      if (this.walls[i].opening) continue
-      if (this.walls[i].distanceFrom(x, y) < tolerance) {
-        return this.walls[i]
+    let bestOpening: Wall | null = null
+    let bestOpeningDist = tolerance * 1.8
+    let bestSolid: Wall | null = null
+    let bestSolidDist = tolerance
+    for (const wall of this.walls) {
+      const dist = wall.distanceFrom(x, y)
+      if (wall.opening) {
+        if (dist < bestOpeningDist) {
+          bestOpening = wall
+          bestOpeningDist = dist
+        }
+      } else if (dist < bestSolidDist) {
+        bestSolid = wall
+        bestSolidDist = dist
       }
     }
-    return null
+    return bestOpening ?? bestSolid
   }
 
   // import and export -- cleanup
@@ -236,9 +273,14 @@ export class Floorplan {
     })
 
     this.walls.forEach((wall) => {
+      const start = wall.getStart()
+      const end = wall.getEnd()
+      if (!start?.id || !end?.id) return
+      floorplan.corners[start.id] = { x: start.x, y: start.y }
+      floorplan.corners[end.id] = { x: end.x, y: end.y }
       floorplan.walls.push({
-        corner1: wall.getStart().id,
-        corner2: wall.getEnd().id,
+        corner1: start.id,
+        corner2: end.id,
         frontTexture: wall.frontTexture,
         backTexture: wall.backTexture,
         thickness: wall.thickness,
@@ -246,6 +288,13 @@ export class Floorplan {
       })
     })
     floorplan.newFloorTextures = this.floorTextures
+    floorplan.roomLabels = this.roomLabels
+    if (this.detectTransform) {
+      floorplan.detectTransform = this.detectTransform
+    }
+    if (this.detectedPlacements) {
+      floorplan.detectedPlacements = this.detectedPlacements
+    }
     return floorplan
   }
 
@@ -262,7 +311,10 @@ export class Floorplan {
     }
     const scope = this
     floorplan.walls.forEach((wall) => {
-      const newWall = scope.newWall(corners[wall.corner1], corners[wall.corner2], {
+      const start = corners[wall.corner1]
+      const end = corners[wall.corner2]
+      if (!start || !end) return
+      const newWall = scope.newWall(start, end, {
         skipUpdate: true,
         opening: Boolean(wall.opening)
       })
@@ -279,6 +331,15 @@ export class Floorplan {
 
     if (floorplan.newFloorTextures) {
       this.floorTextures = floorplan.newFloorTextures
+    }
+    if (Array.isArray(floorplan.roomLabels)) {
+      this.roomLabels = floorplan.roomLabels
+    }
+    if (floorplan.detectTransform) {
+      this.detectTransform = floorplan.detectTransform
+    }
+    if (floorplan.detectedPlacements) {
+      this.detectedPlacements = floorplan.detectedPlacements
     }
 
     this.update()
@@ -322,13 +383,19 @@ export class Floorplan {
     })
     this.corners = []
     this.walls = []
+    this.rooms = []
   }
 
   /** Connect collinear door jambs so rooms can form without drawing a solid wall. */
   private closeDoorGaps(): void {
     const input: DoorGapCorner[] = this.corners.map((corner) => {
       const neighbors = corner.adjacentCorners()
-      const neighbor = neighbors.length === 1 ? neighbors[0] : null
+      const attached = neighbors
+        .map((next) => corner.wallToOrFrom(next))
+        .filter((wall): wall is Wall => Boolean(wall))
+      const alreadyOpening = attached.some((wall) => wall.opening)
+      const neighbor =
+        !corner.keepOpen && !alreadyOpening && neighbors.length === 1 ? neighbors[0] : null
       return {
         id: corner.id,
         x: corner.x,
@@ -363,7 +430,36 @@ export class Floorplan {
     this.assignOrphanEdges()
 
     this.updateFloorTextures()
+    this.relabelRooms()
     this.updated_rooms.fire()
+  }
+
+  public relabelRooms(): void {
+    const ranked = [...this.rooms].sort((a, b) => roomPolyArea(a.interiorCorners) - roomPolyArea(b.interiorCorners))
+    const used = new Set<DetectedLabel>()
+    let unnamed = 1
+    for (const room of ranked) {
+      room.labelAnchor = null
+      const hits = this.roomLabels.filter(
+        (label) =>
+          label.name &&
+          !isRoomDirectoryLabel(label.name) &&
+          !used.has(label) &&
+          Utils.pointInPolygon(label.x, label.y, room.interiorCorners)
+      )
+      if (hits.length === 0) {
+        room.name = `房间 ${unnamed++}`
+        continue
+      }
+      const center = room.getCenter2D()
+      hits.sort(
+        (a, b) => Math.hypot(a.x - center.x, a.y - center.y) - Math.hypot(b.x - center.x, b.y - center.y)
+      )
+      const pick = hits[0]
+      used.add(pick)
+      room.name = pick.name
+      room.labelAnchor = { x: pick.x, y: pick.y }
+    }
   }
 
   /**
@@ -557,4 +653,19 @@ export class Floorplan {
 
     return uniqueCCWLoops
   }
+}
+
+function isRoomDirectoryLabel(name: string): boolean {
+  const parts = name.split(/[\/／、]/).map((part) => part.trim()).filter(Boolean)
+  return parts.length >= 3
+}
+
+function roomPolyArea(corners: Array<{ x: number; y: number }>): number {
+  let area = 0
+  for (let i = 0; i < corners.length; i++) {
+    const a = corners[i]
+    const b = corners[(i + 1) % corners.length]
+    area += a.x * b.y - b.x * a.y
+  }
+  return Math.abs(area) / 2
 }

@@ -21,4 +21,12 @@ const bent = findDoorGapPairs([
 ])
 assert.equal(bent.length, 0, 'L-shaped dangling ends are not a door')
 
+const acrossGap = findDoorGapPairs([
+  { id: 'c1', x: 0, y: 0, neighbor: { x: 200, y: 0 } },
+  { id: 'c2', x: 200, y: 0, neighbor: { x: 0, y: 0 } },
+  { id: 'c3', x: 290, y: 0, neighbor: { x: 500, y: 0 } },
+  { id: 'c4', x: 500, y: 0, neighbor: { x: 290, y: 0 } }
+])
+assert.deepEqual(acrossGap, [['c2', 'c3']], `gap between two walls ${JSON.stringify(acrossGap)}`)
+
 console.log('door-gaps.test ok')

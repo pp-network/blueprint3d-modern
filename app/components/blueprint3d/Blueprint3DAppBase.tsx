@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useTranslations } from 'next-intl'
+import { Sofa, Paintbrush, Grid3x3 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { TopNavBar } from './TopNavBar'
 import { ItemsDrawer } from './ItemsDrawer'
 import { ProjectsView } from './ProjectsView'
@@ -18,11 +20,23 @@ import { WallThicknessPanel } from './WallThicknessPanel'
 import { OverlayControls } from './OverlayControls'
 import { AiWallsStreamPanel } from './AiWallsStreamPanel'
 import { ViewerZoomControls } from './ViewerZoomControls'
+import { FloorplanMinimap, type MinimapItem, type MinimapWall } from './FloorplanMinimap'
+import { drawioToSavedFloorplan, isDrawioXml, savedFloorplanToDrawio } from '@blueprint3d/model/floorplan-drawio'
 import DefaultFloorplan from '@blueprint3d/templates/default.json'
 import blankFloorplan from '@/config/templates/blank.json'
 import { blueprintStorage } from '@/services/storage'
 
 import { applyWallTraceToModel } from '@blueprint3d/vision/apply-trace'
+import { extractFloorplanPlacements, type FloorplanPlacements } from '@blueprint3d/vision/ai-walls-schema'
+import {
+  clearAutoPlacedItems,
+  hasAutoPlacedOpenings,
+  placeDetectedScene,
+  punchDetectedOpenings,
+  rememberDetectedScene,
+  unclosedRoomNames
+} from '@blueprint3d/vision/place-findings'
+import { formatDoorAccessZh, judgeDoorAccess } from '@blueprint3d/model/door-access'
 import { traceWallsFromImage } from '@blueprint3d/vision/trace-walls'
 import type { WallTrace } from '@blueprint3d/vision/types'
 import { detectWallsWithAi, fetchAiWallsConfigured } from '@/lib/ai-walls'
@@ -74,6 +88,9 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
   const tMain = useTranslations('BluePrint.mainControls')
   const tHowTo = useTranslations('BluePrint.howTo')
   const tOverlay = useTranslations('BluePrint.overlay')
+  const tTexture = useTranslations('BluePrint.textureSelector')
+
+  const PLACEMENTS_KEY = 'bp3d.lastPlacements'
 
   const contentRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<HTMLDivElement>(null)
@@ -87,7 +104,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [selectedItem, setSelectedItem] = useState<Item | null>(null)
-  const [floorplannerMode, setFloorplannerMode] = useState<'move' | 'draw' | 'delete'>('move')
+  const [floorplannerMode, setFloorplannerMode] = useState<'move' | 'draw' | 'drawDoor' | 'delete'>('move')
   const [textureType, setTextureType] = useState<'floor' | 'wall' | null>(null)
   const [currentTarget, setCurrentTarget] = useState<HalfEdge | Room | null>(null)
   const [itemsLoading, setItemsLoading] = useState(0)
@@ -101,6 +118,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
     hasOverlay: false,
     opacity: 0.45,
     locked: true,
+    compare: true,
     calibrating: false,
     calibrateReady: false
   })
@@ -109,6 +127,16 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
   const [aiConfigured, setAiConfigured] = useState(false)
   const [aiModel, setAiModel] = useState<string | null>(null)
   const [aiStream, setAiStream] = useState({ thinking: '', output: '', status: '', findings: '' })
+  const [tourRooms, setTourRooms] = useState<Room[]>([])
+  const [minimapWalls, setMinimapWalls] = useState<MinimapWall[]>([])
+  const [minimapItems, setMinimapItems] = useState<MinimapItem[]>([])
+  const [activeRoomName, setActiveRoomName] = useState<string>()
+  const [generatingFurnishings, setGeneratingFurnishings] = useState(false)
+  const lastPlacementsRef = useRef<FloorplanPlacements | null>(null)
+  const openingsPlacedRef = useRef(false)
+  const detectGenerationRef = useRef(0)
+  const detectAbortRef = useRef<AbortController | null>(null)
+  const detectSnapshotRef = useRef<string | null>(null)
 
   const [currentBlueprint, setCurrentBlueprint] = useState<{
     id: string
@@ -220,10 +248,55 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
         }, 2000)
       }
     }
+    const snapshotTour = () => {
+      const fp = blueprint3d.model.floorplan
+      setTourRooms([...fp.getRooms()])
+      setMinimapWalls(
+        fp.getWalls().map((wall) => ({
+          x1: wall.getStart().x,
+          y1: wall.getStart().y,
+          x2: wall.getEnd().x,
+          y2: wall.getEnd().y,
+          opening: wall.opening
+        }))
+      )
+      setMinimapItems(
+        blueprint3d.model.scene.getItems().map((item) => ({
+          x: item.position.x,
+          z: item.position.z
+        }))
+      )
+    }
+    snapshotTour()
+
     blueprint3d.model.historyChanged.add(() => {
       syncHistoryUi()
       setHasWalls(blueprint3d.model.floorplan.getWalls().length > 0)
+      snapshotTour()
     })
+    blueprint3d.model.floorplan.fireOnUpdatedRooms(() => {
+      snapshotTour()
+    })
+
+    try {
+      const raw = sessionStorage.getItem(PLACEMENTS_KEY)
+      if (raw) {
+        const stored = JSON.parse(raw) as {
+          placements?: FloorplanPlacements
+          transform?: { originX: number; originY: number; cmPerImagePixel: number }
+        }
+        if (stored.placements) {
+          lastPlacementsRef.current = stored.placements
+          rememberDetectedScene(
+            blueprint3d.model,
+            stored.transform ?? blueprint3d.floorplanner?.overlay ?? null,
+            stored.placements
+          )
+        }
+      }
+    } catch {
+      /* ignore */
+    }
 
     blueprint3d.floorplanner?.wallSelectedCallbacks.add((wall) => {
       setSelectedWallThickness(wall ? wall.thickness : null)
@@ -256,6 +329,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
 
     blueprint3d.model.scene.itemLoadedCallbacks.add((item) => {
       setItemsLoading((prev) => prev - 1)
+      snapshotTour()
       const loadingToasts = loadingToastsRef.current
       if (loadingToasts.length > 0) {
         const { toastId, itemName } = loadingToasts.shift()!
@@ -359,6 +433,22 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
     return () => resizeObserver.disconnect()
   }, [activeTab, viewMode, detecting])
 
+  const placeOpeningsOn3d = useCallback(() => {
+    const app = blueprint3dRef.current
+    if (!app || openingsPlacedRef.current || hasAutoPlacedOpenings(app.model)) return
+    const overlay = app.floorplanner?.overlay ?? null
+    const placements =
+      lastPlacementsRef.current ??
+      app.model.floorplan.detectedPlacements ??
+      extractFloorplanPlacements(aiStream.output)
+    if (!placements?.openings.length) return
+    const placed = placeDetectedScene(app.model, overlay, placements, { furniture: false })
+    if (placed.doors + placed.windows > 0) {
+      openingsPlacedRef.current = true
+      toast.success(tOverlay('openingsOn3d', { doors: placed.doors, windows: placed.windows }))
+    }
+  }, [aiStream.output, tOverlay])
+
   const handleViewChange = useCallback(
     (mode: '2d' | '3d') => {
       if (!blueprint3dRef.current) return
@@ -384,11 +474,12 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
           if (blueprint3dRef.current) {
             blueprint3dRef.current.model.floorplan.update()
             blueprint3dRef.current.three.updateWindowSize()
+            placeOpeningsOn3d()
           }
         }, 50)
       }
     },
-    [onViewModeChange]
+    [onViewModeChange, placeOpeningsOn3d]
   )
 
   const handleDeleteItem = useCallback(() => {
@@ -435,6 +526,57 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
     [selectedItem]
   )
 
+  const handleGoToRoom = useCallback((room: Room) => {
+    const app = blueprint3dRef.current
+    if (!app) return
+    setViewMode('3d')
+    app.three.setViewMode('3d')
+    app.three.goToRoom(room)
+    setActiveRoomName(room.name)
+    placeOpeningsOn3d()
+  }, [placeOpeningsOn3d])
+
+  const handleGenerateFurnishings = useCallback(() => {
+    const app = blueprint3dRef.current
+    if (!app) return
+    if (app.model.floorplan.getWalls().length === 0) {
+      toast.error(tOverlay('generateNeedWalls'))
+      return
+    }
+    setGeneratingFurnishings(true)
+    try {
+      clearAutoPlacedItems(app.model)
+      const overlay = app.floorplanner?.overlay ?? null
+      const placements =
+        lastPlacementsRef.current ??
+        app.model.floorplan.detectedPlacements ??
+        extractFloorplanPlacements(aiStream.output)
+      if (!placements || (!placements.furniture.length && !placements.openings.length && !placements.rooms.length)) {
+        toast.error(tOverlay('generateNeedFindings'))
+        return
+      }
+      const placed = placeDetectedScene(app.model, overlay, placements)
+      if (placed.doors + placed.windows > 0) openingsPlacedRef.current = true
+      if (placed.furniture + placed.doors + placed.windows === 0) {
+        toast.error(tOverlay('generateNeedFindings'))
+        return
+      }
+      setTourRooms([...app.model.floorplan.getRooms()])
+      toast.success(
+        tOverlay('generateSuccess', {
+          furniture: placed.furniture,
+          doors: placed.doors,
+          windows: placed.windows
+        })
+      )
+    } catch (error) {
+      console.error('Generate furnishings failed:', error)
+      toast.error(tOverlay('generateError'))
+    } finally {
+      setGeneratingFurnishings(false)
+    }
+  }, [aiStream.output, tOverlay])
+
   const handleZoomIn = useCallback(() => {
     blueprint3dRef.current?.three.zoomIn()
   }, [])
@@ -479,13 +621,13 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
 
   const handleExportJson = useCallback(() => {
     if (!blueprint3dRef.current) return
-    const data = blueprint3dRef.current.model.exportSerialized()
-    const blob = new Blob([data], { type: 'application/json' })
+    const name = currentBlueprintRef.current?.name || 'floorplan'
+    const xml = savedFloorplanToDrawio(blueprint3dRef.current.model.floorplan.saveFloorplan(), name)
+    const blob = new Blob([xml], { type: 'application/xml' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const name = currentBlueprintRef.current?.name || 'floorplan'
     a.href = url
-    a.download = `${name}.json`
+    a.download = `${name}.drawio`
     a.click()
     URL.revokeObjectURL(url)
     toast.success(tMain('exportSuccess'))
@@ -501,14 +643,20 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
       reader.onload = () => {
         try {
           const text = String(reader.result)
-          const parsed = JSON.parse(text) as { floorplan?: unknown; items?: unknown }
-          if (!parsed.floorplan || !parsed.items) {
-            throw new Error('invalid')
-          }
           if (!blueprint3dRef.current) return
           seedingRef.current = true
-          blueprint3dRef.current.model.loadSerialized(text)
+          if (isDrawioXml(text)) {
+            const floorplan = drawioToSavedFloorplan(text)
+            blueprint3dRef.current.model.loadSerialized(JSON.stringify({ floorplan, items: [] }))
+          } else {
+            const parsed = JSON.parse(text) as { floorplan?: unknown; items?: unknown }
+            if (!parsed.floorplan || !parsed.items) {
+              throw new Error('invalid')
+            }
+            blueprint3dRef.current.model.loadSerialized(text)
+          }
           seedingRef.current = false
+          setHasWalls(blueprint3dRef.current.model.floorplan.getWalls().length > 0)
           setDirty(true)
           toast.success(tMain('importSuccess'))
         } catch (error) {
@@ -526,6 +674,18 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
     setSelectedWallThickness(cm)
   }, [])
 
+  const cancelWallDetect = useCallback((restoreWalls = false) => {
+    detectGenerationRef.current += 1
+    detectAbortRef.current?.abort()
+    detectAbortRef.current = null
+    setDetecting(false)
+    const snapshot = detectSnapshotRef.current
+    detectSnapshotRef.current = null
+    if (restoreWalls && snapshot && blueprint3dRef.current) {
+      blueprint3dRef.current.model.loadSerialized(snapshot, { seedHistory: false })
+    }
+  }, [])
+
   const runWallDetect = useCallback(
     (overallWidthMm?: number, mode: 'ai' | 'local' = 'local') => {
       const app = blueprint3dRef.current
@@ -534,7 +694,16 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
         toast.error(tOverlay('detectError'))
         return
       }
+      if (app.model.floorplan.getWalls().length > 0 && !window.confirm(tOverlay('detectReplaceConfirm'))) {
+        return
+      }
+      cancelWallDetect(false)
+      detectSnapshotRef.current = app.model.exportSerialized()
+      const generation = detectGenerationRef.current
+      const abort = new AbortController()
+      detectAbortRef.current = abort
       setDetecting(true)
+      openingsPlacedRef.current = false
       setAiStream({ thinking: '', output: '', status: '', findings: '' })
       const toastId = toast.loading(tOverlay('detecting'))
       const run = async () => {
@@ -543,6 +712,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
           let lastApply = 0
           let framed = false
           const paint = (trace: WallTrace, seedHistory: boolean) => {
+            if (generation !== detectGenerationRef.current) return 0
             app.floorplanner!.lastWallTrace = trace
             const count = applyWallTraceToModel(app.model, overlay, trace, overallCm, { seedHistory })
             if (!framed) {
@@ -554,12 +724,16 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
           }
           let fallback: WallTrace | null = null
           try {
+            let placements: FloorplanPlacements | null = null
+            let dumpPath: string | undefined
             const trace =
               mode === 'ai'
-                ? await detectWallsWithAi(
+                ? await (async () => {
+                    const result = await detectWallsWithAi(
                     overlay.image,
                     overallWidthMm,
                     (partial, progress) => {
+                      if (generation !== detectGenerationRef.current) return
                       toast.loading(tOverlay('detectingPartial', progress), { id: toastId })
                       const now = Date.now()
                       if (now - lastApply >= 180) {
@@ -568,27 +742,89 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
                       }
                     },
                     (stream) => {
+                      if (generation !== detectGenerationRef.current) return
+                      if (stream.placements) lastPlacementsRef.current = stream.placements
                       setAiStream((prev) => ({
                         thinking: stream.thinking ?? prev.thinking,
                         output: stream.output ?? prev.output,
                         status: stream.status ?? prev.status,
                         findings: stream.findings ?? prev.findings
                       }))
-                    }
-                  )
+                    },
+                    abort.signal
+                    )
+                    placements = result.placements ?? lastPlacementsRef.current
+                    dumpPath = result.dumpPath
+                    return result.trace
+                  })()
                 : traceWallsFromImage(overlay.image)
+            if (generation !== detectGenerationRef.current) {
+              toast.dismiss(toastId)
+              return
+            }
             if (trace.segments.length === 0) {
               toast.error(tOverlay('detectEmpty'), { id: toastId })
               return
             }
             const count = paint(trace, true)
+            lastPlacementsRef.current = placements ?? lastPlacementsRef.current
+            rememberDetectedScene(app.model, overlay, lastPlacementsRef.current)
+            const punched = punchDetectedOpenings(app.model)
+            const unclosed = unclosedRoomNames(app.model.floorplan)
+            const access = judgeDoorAccess(app.model.floorplan)
+            const notes = [
+              punched > 0 ? `已在墙上切开 ${punched} 个门洞` : '',
+              unclosed.length ? `未封闭：${unclosed.join('、')}。对照底图补墙，不要凭空闭圈` : '',
+              formatDoorAccessZh(access)
+            ].filter(Boolean)
+            if (notes.length) {
+              setAiStream((prev) => ({
+                ...prev,
+                findings: [prev.findings, ...notes].filter(Boolean).join('\n')
+              }))
+            }
+            if (lastPlacementsRef.current) {
+              try {
+                sessionStorage.setItem(
+                  PLACEMENTS_KEY,
+                  JSON.stringify({
+                    placements: lastPlacementsRef.current,
+                    transform: {
+                      originX: overlay.originX,
+                      originY: overlay.originY,
+                      cmPerImagePixel: overlay.cmPerImagePixel
+                    }
+                  })
+                )
+              } catch {
+                /* ignore */
+              }
+            }
+            setTourRooms([...app.model.floorplan.getRooms()])
             app.floorplanner!.frameOnOverlay()
-            toast.success(tOverlay('detectSuccess', { count }), { id: toastId })
+            setViewMode('2d')
+            app.three.setViewMode('2d')
+            if (dumpPath) {
+              setAiStream((prev) => ({
+                ...prev,
+                findings: prev.findings
+                  ? `${prev.findings}\n${tOverlay('detectDump', { path: dumpPath })}`
+                  : tOverlay('detectDump', { path: dumpPath })
+              }))
+            }
+            toast.success(
+              dumpPath
+                ? `${tOverlay('detectSuccess', { count })} ${tOverlay('detectDump', { path: dumpPath })}`
+                : tOverlay('detectSuccess', { count }),
+              { id: toastId }
+            )
           } catch (error) {
             if (mode === 'ai') {
               fallback = traceWallsFromImage(overlay.image)
               if (fallback.segments.length > 0) {
                 const count = paint(fallback, false)
+                app.model.floorplan.relabelRooms()
+                setViewMode('2d')
                 toast.warning(tOverlay('detectFallback', { count }), { id: toastId })
                 return
               }
@@ -596,17 +832,38 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
             throw error
           }
         } catch (error) {
+          if (generation !== detectGenerationRef.current || abort.signal.aborted) {
+            toast.dismiss(toastId)
+            return
+          }
           console.error('Wall detect failed:', error)
           const message = error instanceof Error ? error.message : tOverlay('detectError')
           toast.error(message, { id: toastId })
         } finally {
-          setDetecting(false)
+          if (generation === detectGenerationRef.current) {
+            setDetecting(false)
+            detectAbortRef.current = null
+            detectSnapshotRef.current = null
+          }
         }
       }
       void run()
     },
-    [tOverlay]
+    [cancelWallDetect, tOverlay]
   )
+
+  const forgetDetectedMarkers = useCallback(() => {
+    lastPlacementsRef.current = null
+    openingsPlacedRef.current = false
+    if (blueprint3dRef.current) {
+      blueprint3dRef.current.model.floorplan.detectedPlacements = null
+    }
+    try {
+      sessionStorage.removeItem(PLACEMENTS_KEY)
+    } catch {
+      /* ignore */
+    }
+  }, [PLACEMENTS_KEY])
 
   const handleOverlayImport = useCallback((file: File, overallWidthMm?: number) => {
     const looksLikeImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name)
@@ -625,7 +882,12 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
       }
       app.three.setViewMode('2d')
       setViewMode('2d')
-      app.floorplanner.setOverlayImage(image)
+      cancelWallDetect(true)
+      forgetDetectedMarkers()
+      toast.dismiss()
+      app.floorplanner.setOverlayImage(image, {
+        overallWidthCm: overallWidthMm && overallWidthMm > 0 ? overallWidthMm / 10 : undefined
+      })
       setOverlayState((prev) => ({
         ...prev,
         hasOverlay: true,
@@ -633,15 +895,15 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
         calibrateReady: false
       }))
       URL.revokeObjectURL(url)
-      toast.success(tOverlay('importSuccess'))
-      window.setTimeout(() => runWallDetect(overallWidthMm, aiConfigured ? 'ai' : 'local'), 80)
+      const wallCount = app.model.floorplan.getWalls().length
+      toast.success(wallCount > 0 ? tOverlay('importKeepWalls') : tOverlay('importSuccess'))
     }
     image.onerror = () => {
       URL.revokeObjectURL(url)
       toast.error(tOverlay('importError'))
     }
     image.src = url
-  }, [aiConfigured, runWallDetect, tOverlay])
+  }, [cancelWallDetect, forgetDetectedMarkers, tOverlay])
 
   const handleClearWalls = useCallback(() => {
     const app = blueprint3dRef.current
@@ -847,12 +1109,13 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
     [viewMode]
   )
 
-  const handleFloorplannerModeChange = useCallback((mode: 'move' | 'draw' | 'delete') => {
+  const handleFloorplannerModeChange = useCallback((mode: 'move' | 'draw' | 'drawDoor' | 'delete') => {
     setFloorplannerMode(mode)
     if (!blueprint3dRef.current) return
     const modeMap = {
       move: floorplannerModes.MOVE,
       draw: floorplannerModes.DRAW,
+      drawDoor: floorplannerModes.DRAW_DOOR,
       delete: floorplannerModes.DELETE
     }
     blueprint3dRef.current.floorplanner?.setMode(modeMap[mode])
@@ -861,9 +1124,11 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
   const handleFloorplannerDone = useCallback(() => {
     setViewMode('3d')
     if (blueprint3dRef.current) {
+      blueprint3dRef.current.three.setViewMode('3d')
       blueprint3dRef.current.model.floorplan.update()
+      placeOpeningsOn3d()
     }
-  }, [])
+  }, [placeOpeningsOn3d])
 
   const handleItemSelect = useCallback(
     (item: {
@@ -902,13 +1167,25 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
 
   const handleTextureSelect = useCallback(
     (textureUrl: string, stretch: boolean, scale: number) => {
-      if (currentTarget && blueprint3dRef.current) {
-        blueprint3dRef.current.model.beginHistory()
-        currentTarget.setTexture(textureUrl, stretch, scale)
-        blueprint3dRef.current.model.commitHistory()
+      const app = blueprint3dRef.current
+      if (!app || !textureType) return
+      app.model.beginHistory()
+      if (textureType === 'wall') {
+        for (const wall of app.model.floorplan.getWalls()) {
+          wall.frontTexture = { url: textureUrl, stretch, scale }
+          wall.backTexture = { url: textureUrl, stretch, scale }
+          wall.frontEdge?.setTexture(textureUrl, stretch, scale)
+          wall.backEdge?.setTexture(textureUrl, stretch, scale)
+        }
+      } else {
+        for (const room of app.model.floorplan.getRooms()) {
+          room.setTexture(textureUrl, stretch, scale)
+        }
       }
+      app.model.commitHistory()
+      app.three.needsUpdate()
     },
-    [currentTarget]
+    [textureType]
   )
 
   useEffect(() => {
@@ -986,6 +1263,67 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
           >
             {viewMode === '3d' && (
               <>
+                <div className="absolute left-1/2 top-16 z-[70] -translate-x-1/2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!hasWalls || generatingFurnishings}
+                    onClick={handleGenerateFurnishings}
+                    className="shadow-md"
+                  >
+                    <Sofa className="mr-1.5 h-4 w-4" />
+                    {generatingFurnishings ? tOverlay('generating') : tOverlay('generateFurnishings')}
+                  </Button>
+                </div>
+                <div className="absolute right-3 top-16 z-[70] flex items-start gap-2">
+                  {textureType && (
+                    <TextureSelector
+                      type={textureType}
+                      onTextureSelect={handleTextureSelect}
+                      onClose={() => {
+                        setTextureType(null)
+                        setCurrentTarget(null)
+                      }}
+                    />
+                  )}
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="flex gap-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={textureType === 'wall' ? 'default' : 'secondary'}
+                        className="shadow-md"
+                        onClick={() => {
+                          setTextureType((prev) => (prev === 'wall' ? null : 'wall'))
+                          setSelectedItem(null)
+                        }}
+                      >
+                        <Paintbrush className="mr-1 h-3.5 w-3.5" />
+                        {tTexture('openWall')}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={textureType === 'floor' ? 'default' : 'secondary'}
+                        className="shadow-md"
+                        onClick={() => {
+                          setTextureType((prev) => (prev === 'floor' ? null : 'floor'))
+                          setSelectedItem(null)
+                        }}
+                      >
+                        <Grid3x3 className="mr-1 h-3.5 w-3.5" />
+                        {tTexture('openFloor')}
+                      </Button>
+                    </div>
+                    <FloorplanMinimap
+                      rooms={tourRooms}
+                      walls={minimapWalls}
+                      items={minimapItems}
+                      activeRoomName={activeRoomName}
+                      onRoomSelect={handleGoToRoom}
+                    />
+                  </div>
+                </div>
                 <div className="absolute right-3 top-1/2 z-[70] -translate-y-1/2">
                   <ViewerZoomControls
                     onZoomIn={handleZoomIn}
@@ -993,6 +1331,11 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
                     onReset={handleResetView}
                   />
                 </div>
+                {activeRoomName && (
+                  <div className="pointer-events-none absolute bottom-16 left-4 z-[70] rounded bg-black/70 px-3 py-1.5 text-sm text-white">
+                    {activeRoomName}
+                  </div>
+                )}
                 {!isFullscreen && <ControlsHelp viewMode="3d" />}
                 {renderOverlay && renderOverlay()}
 
@@ -1028,6 +1371,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
                     hasWalls={hasWalls}
                     opacity={overlayState.opacity}
                     locked={overlayState.locked}
+                    compareOverlay={overlayState.compare}
                     calibrating={overlayState.calibrating}
                     calibrateReady={overlayState.calibrateReady}
                     onImport={handleOverlayImport}
@@ -1036,17 +1380,23 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
                     aiConfigured={aiConfigured}
                     onClearWalls={handleClearWalls}
                     onClear={() => {
+                      forgetDetectedMarkers()
                       blueprint3dRef.current?.floorplanner?.clearOverlay()
                       setOverlayState({
                         hasOverlay: false,
                         opacity: 0.45,
                         locked: true,
+                        compare: true,
                         calibrating: false,
                         calibrateReady: false
                       })
                     }}
                     onOpacity={(value) => blueprint3dRef.current?.floorplanner?.setOverlayOpacity(value)}
                     onLocked={(locked) => blueprint3dRef.current?.floorplanner?.setOverlayLocked(locked)}
+                    onCompareOverlay={(compare) => {
+                      blueprint3dRef.current?.floorplanner?.setCompareOverlay(compare)
+                      setOverlayState((prev) => ({ ...prev, compare }))
+                    }}
                     onStartCalibrate={() => {
                       blueprint3dRef.current?.floorplanner?.startCalibration()
                       setOverlayState((prev) => ({
@@ -1097,9 +1447,9 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
                       />
                     </div>
                   )}
-                  {floorplannerMode === 'draw' && (
+                  {(floorplannerMode === 'draw' || floorplannerMode === 'drawDoor') && (
                     <div className="absolute left-5 bottom-5 bg-black/50 text-primary-foreground px-2.5 py-1.5 rounded text-sm">
-                      {tFloorplanner('escHint')}
+                      {floorplannerMode === 'drawDoor' ? tFloorplanner('doorHint') : tFloorplanner('escHint')}
                     </div>
                   )}
                   <ControlsHelp viewMode="2d" />
@@ -1121,10 +1471,16 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
             </div>
           )}
 
-          {/* Texture Selector */}
-          {textureType && !isFullscreen && (
-            <div className="absolute right-2 md:right-4 top-16 md:top-20 z-[70] max-h-[calc(100vh-100px)] md:max-h-[calc(100vh-120px)] overflow-y-auto">
-              <TextureSelector type={textureType} onTextureSelect={handleTextureSelect} />
+          {textureType && viewMode !== '3d' && !isFullscreen && (
+            <div className="absolute right-2 md:right-4 top-16 md:top-20 z-[70]">
+              <TextureSelector
+                type={textureType}
+                onTextureSelect={handleTextureSelect}
+                onClose={() => {
+                  setTextureType(null)
+                  setCurrentTarget(null)
+                }}
+              />
             </div>
           )}
 
@@ -1150,7 +1506,7 @@ export function Blueprint3DAppBase({ config = {} }: Blueprint3DAppBaseProps) {
       <input
         ref={jsonInputRef}
         type="file"
-        accept="application/json,.json"
+        accept="application/json,.json,application/xml,.xml,.drawio"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0]

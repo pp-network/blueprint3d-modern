@@ -1,14 +1,14 @@
 'use client'
 
-import { Move, Pencil, Trash2, Check, Undo2 } from 'lucide-react'
+import { Move, Pencil, Trash2, Check, Undo2, DoorOpen } from 'lucide-react'
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { useTranslations } from 'next-intl'
 import { useIsMobile } from "@/hooks/use-media-query"
 
 interface FloorplannerControlsProps {
-  mode: 'move' | 'draw' | 'delete'
-  onModeChange: (mode: 'move' | 'draw' | 'delete') => void
+  mode: 'move' | 'draw' | 'drawDoor' | 'delete'
+  onModeChange: (mode: 'move' | 'draw' | 'drawDoor' | 'delete') => void
   onDone: () => void
   onUndo?: () => void
   canUndo?: boolean
@@ -52,6 +52,21 @@ export function FloorplannerControls({ mode, onModeChange, onDone, onUndo, canUn
           >
             <Pencil className={cn(isMobile ? 'h-5 w-5' : 'h-4 w-4')} />
             {!isMobile && t('drawWalls')}
+          </Button>
+          <Button
+            size={isMobile ? 'icon' : 'sm'}
+            variant={mode === 'drawDoor' ? 'default' : 'secondary'}
+            onClick={() => onModeChange('drawDoor')}
+            className={cn(
+              !isMobile && 'flex items-center gap-2',
+              isMobile && 'h-11 w-11 shadow-lg active:scale-95 transition-transform'
+            )}
+            title={isMobile ? t('drawDoors') : undefined}
+            aria-label={t('drawDoors')}
+            aria-pressed={mode === 'drawDoor'}
+          >
+            <DoorOpen className={cn(isMobile ? 'h-5 w-5' : 'h-4 w-4')} />
+            {!isMobile && t('drawDoors')}
           </Button>
           <Button
             size={isMobile ? 'icon' : 'sm'}

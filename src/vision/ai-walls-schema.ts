@@ -6,6 +6,7 @@ export interface AiWallsPayload {
   imageHeight: number
   outerLoop: Array<{ x: number; y: number }>
   innerWalls?: Array<{ x1: number; y1: number; x2: number; y2: number }>
+  findings?: unknown
 }
 
 export class AiWallsValidationError extends Error {
@@ -41,7 +42,7 @@ export function parseAiWallsPayload(raw: unknown): AiWallsPayload {
   if (loopRaw.length > 48) {
     throw new AiWallsValidationError('外墙折点过多')
   }
-  const outerLoop = loopRaw.map((p, i) => asPoint(p, `outerLoop[${i}]`))
+  const outerLoop = dropClosedDuplicate(loopRaw.map((p, i) => asPoint(p, `outerLoop[${i}]`)))
   const innerRaw = data.innerWalls
   if (innerRaw != null && !Array.isArray(innerRaw)) {
     throw new AiWallsValidationError('innerWalls 必须是数组')
@@ -50,13 +51,123 @@ export function parseAiWallsPayload(raw: unknown): AiWallsPayload {
     throw new AiWallsValidationError('内墙数量过多')
   }
   const innerWalls = (innerRaw ?? []).map((s, i) => asSegment(s, `innerWalls[${i}]`))
-  return { imageWidth, imageHeight, outerLoop, innerWalls }
+  return clampPayloadToImage({
+    imageWidth,
+    imageHeight,
+    outerLoop,
+    innerWalls,
+    findings: data.findings
+  })
+}
+
+export function alignPayloadToImage(
+  payload: AiWallsPayload,
+  width?: number,
+  height?: number
+): AiWallsPayload {
+  if (!width || !height || width <= 0 || height <= 0) {
+    return payload
+  }
+  const sx = width / payload.imageWidth
+  const sy = height / payload.imageHeight
+  if (Math.abs(sx - 1) < 0.02 && Math.abs(sy - 1) < 0.02) {
+    return { ...payload, imageWidth: width, imageHeight: height }
+  }
+  return clampPayloadToImage({
+    imageWidth: width,
+    imageHeight: height,
+    outerLoop: payload.outerLoop.map((p) => ({ x: p.x * sx, y: p.y * sy })),
+    innerWalls: (payload.innerWalls ?? []).map((s) => ({
+      x1: s.x1 * sx,
+      y1: s.y1 * sy,
+      x2: s.x2 * sx,
+      y2: s.y2 * sy
+    })),
+    findings: payload.findings
+  })
+}
+
+export function clampPayloadToImage(payload: AiWallsPayload): AiWallsPayload {
+  const w = payload.imageWidth
+  const h = payload.imageHeight
+  const clamp = (value: number, max: number) => Math.max(0, Math.min(max, value))
+  const outerLoop = payload.outerLoop.map((p) => ({ x: clamp(p.x, w), y: clamp(p.y, h) }))
+  const innerWalls = (payload.innerWalls ?? [])
+    .map((s) => ({
+      x1: clamp(s.x1, w),
+      y1: clamp(s.y1, h),
+      x2: clamp(s.x2, w),
+      y2: clamp(s.y2, h)
+    }))
+    .filter((s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) >= 2)
+  return { ...payload, outerLoop, innerWalls }
+}
+
+export function critiqueAiWalls(
+  payload: AiWallsPayload,
+  roomCount = 0,
+  doorCount = 0
+): string[] {
+  const notes: string[] = []
+  const oob = payload.outerLoop.some(
+    (p) => p.x < 0 || p.y < 0 || p.x > payload.imageWidth || p.y > payload.imageHeight
+  )
+  if (oob) {
+    notes.push('外墙有点画出图外，已拉回图像范围')
+  }
+  const inner = payload.innerWalls?.length ?? 0
+  if (roomCount >= 6 && inner < roomCount + 3) {
+    notes.push('隔墙偏少，厨房/卫生间/卧室可能还没分开，请在 2D 补墙')
+  }
+  if (roomCount >= 6 && doorCount < Math.floor(roomCount / 2)) {
+    notes.push('门洞偏少，各房间入口可能没写全')
+  }
+  const xs = payload.outerLoop.map((p) => p.x)
+  const west = Math.min(...xs)
+  const westJogs = new Set(
+    payload.outerLoop.filter((p) => Math.abs(p.x - west) <= payload.imageWidth * 0.03).map((p) => Math.round(p.y / 20))
+  )
+  if (westJogs.size <= 2) {
+    notes.push('左侧外墙几乎是一条竖线，次卫凸出和入口退线可能漏了')
+  }
+  if (payload.outerLoop.length <= 6) {
+    notes.push('外墙只有示意轮廓，阳台凹凸和房间拐角可能被简化掉了')
+  }
+  return notes
 }
 
 export interface FloorplanFindings {
   overallWidthMm?: number
   rooms: string[]
   furniture: string[]
+}
+
+export type CatalogKind =
+  | 'bed'
+  | 'drawer'
+  | 'wardrobe'
+  | 'light'
+  | 'storage'
+  | 'table'
+  | 'chair'
+  | 'sofa'
+  | 'armchair'
+  | 'stool'
+  | 'door'
+  | 'window'
+
+export interface DetectedPoint {
+  name: string
+  kind?: string
+  x: number
+  y: number
+}
+
+export interface FloorplanPlacements {
+  overallWidthMm?: number
+  rooms: DetectedPoint[]
+  furniture: DetectedPoint[]
+  openings: DetectedPoint[]
 }
 
 export function extractFloorplanFindings(text: string): FloorplanFindings | null {
@@ -67,10 +178,10 @@ export function extractFloorplanFindings(text: string): FloorplanFindings | null
     ...matchQuotedNames(sliceSection(text, 'rooms', 'furniture')),
     ...matchNamedObjects(sliceSection(text, 'rooms', 'furniture'))
   ])
-  const furniture = uniqueNames([
-    ...matchQuotedNames(sliceSection(text, 'furniture')),
-    ...matchNamedObjects(sliceSection(text, 'furniture'))
-  ])
+  const furnitureNames = uniqueNames(matchQuotedNames(sliceSection(text, 'furniture')))
+  const furniture = furnitureNames.length
+    ? furnitureNames
+    : uniqueNames(matchNamedObjects(sliceSection(text, 'furniture')))
   const overallWidthMm = pickNumber(text, 'overallWidthMm')
   if (!rooms.length && !furniture.length && !overallWidthMm) {
     return null
@@ -78,7 +189,7 @@ export function extractFloorplanFindings(text: string): FloorplanFindings | null
   return { overallWidthMm, rooms, furniture }
 }
 
-export function formatFindingsZh(findings: FloorplanFindings): string {
+export function formatFindingsZh(findings: FloorplanFindings, notes: string[] = []): string {
   const lines: string[] = []
   if (findings.overallWidthMm) {
     lines.push(`总宽 ${findings.overallWidthMm} mm`)
@@ -89,7 +200,58 @@ export function formatFindingsZh(findings: FloorplanFindings): string {
   if (findings.furniture.length) {
     lines.push(`家具：${findings.furniture.join('、')}`)
   }
+  if (notes.length) {
+    lines.push(`核对：${notes.join('；')}`)
+  }
   return lines.join('\n')
+}
+
+export function extractFloorplanPlacements(text: string): FloorplanPlacements | null {
+  const roomsRaw = extractBracketArray(text, 'rooms') || sliceUntilNextKey(text, 'rooms', 'furniture')
+  const furnitureRaw = extractBracketArray(text, 'furniture') || sliceUntilNextKey(text, 'furniture', 'openings')
+  const openingsRaw = extractBracketArray(text, 'openings') || sliceUntilNextKey(text, 'openings')
+  const rooms = parseNamedPoints(roomsRaw)
+  const furniture = parseNamedPoints(furnitureRaw)
+  const openings = parseNamedPoints(openingsRaw)
+  const fromFurniture = furniture.filter((item) => item.kind === 'door' || item.kind === 'window')
+  const mergedOpenings = [...openings]
+  for (const item of fromFurniture) {
+    const duplicate = mergedOpenings.some(
+      (o) => o.kind === item.kind && Math.hypot(o.x - item.x, o.y - item.y) < 4
+    )
+    if (!duplicate) {
+      mergedOpenings.push(item)
+    }
+  }
+  const overallWidthMm = pickNumber(text, 'overallWidthMm')
+  if (!rooms.length && !furniture.length && !mergedOpenings.length && !overallWidthMm) {
+    return null
+  }
+  return {
+    overallWidthMm,
+    rooms,
+    furniture: furniture.filter((item) => item.kind !== 'door' && item.kind !== 'window'),
+    openings: mergedOpenings
+  }
+}
+
+function parseNamedPoints(text: string): DetectedPoint[] {
+  const points: DetectedPoint[] = []
+  const objectRe = /\{[^{}]*\}/g
+  for (const raw of text.match(objectRe) ?? []) {
+    const name = raw.match(/"name"\s*:\s*"([^"]+)"/)?.[1]?.trim()
+    const kind = raw.match(/"kind"\s*:\s*"([^"]+)"/)?.[1]?.trim()
+    const x = Number(raw.match(/"x"\s*:\s*(-?\d+(?:\.\d+)?)/)?.[1])
+    const y = Number(raw.match(/"y"\s*:\s*(-?\d+(?:\.\d+)?)/)?.[1])
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue
+    points.push({
+      name: name || kind || '',
+      kind,
+      x,
+      y
+    })
+  }
+  return points
 }
 
 function matchQuotedNames(text: string): string[] {
@@ -120,6 +282,27 @@ export interface PartialAiWalls extends AiWallsPayload {
 const POINT_RE = /\{\s*"x"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"y"\s*:\s*(-?\d+(?:\.\d+)?)\s*\}/g
 const SEG_RE =
   /\{\s*"x1"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"y1"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"x2"\s*:\s*(-?\d+(?:\.\d+)?)\s*,\s*"y2"\s*:\s*(-?\d+(?:\.\d+)?)\s*\}/g
+
+export function critiqueFromOutput(text: string, placements?: FloorplanPlacements | null): string[] {
+  const imageWidth = pickNumber(text, 'imageWidth')
+  const imageHeight = pickNumber(text, 'imageHeight')
+  const outerLoop = [...sliceSection(text, 'outerLoop', 'innerWalls').matchAll(POINT_RE)].map((m) => ({
+    x: Number(m[1]),
+    y: Number(m[2])
+  }))
+  const innerWalls = [...sliceSection(text, 'innerWalls').matchAll(SEG_RE)].map((m) => ({
+    x1: Number(m[1]),
+    y1: Number(m[2]),
+    x2: Number(m[3]),
+    y2: Number(m[4])
+  }))
+  if (!imageWidth || !imageHeight || outerLoop.length < 4) {
+    return []
+  }
+  const rooms = placements?.rooms.length ?? 0
+  const doors = placements?.openings.filter((o) => o.kind === 'door').length ?? 0
+  return critiqueAiWalls({ imageWidth, imageHeight, outerLoop, innerWalls }, rooms, doors)
+}
 
 function pickNumber(text: string, key: string): number | undefined {
   const match = text.match(new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`))
@@ -302,6 +485,16 @@ function asPoint(value: unknown, label: string): { x: number; y: number } {
     throw new AiWallsValidationError(`${label} 坐标无效`)
   }
   return { x: p.x, y: p.y }
+}
+
+function dropClosedDuplicate(loop: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  if (loop.length < 2) return loop
+  const first = loop[0]
+  const last = loop[loop.length - 1]
+  if (Math.hypot(first.x - last.x, first.y - last.y) < 1) {
+    return loop.slice(0, -1)
+  }
+  return loop
 }
 
 function asSegment(value: unknown, label: string): { x1: number; y1: number; x2: number; y2: number } {
