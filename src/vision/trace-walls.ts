@@ -1,3 +1,4 @@
+import { cadInkMask } from './cad-ink'
 import { segmentLength, traceBBox } from './build-floorplan'
 import type { PixelSegment, WallTrace } from './types'
 
@@ -86,61 +87,7 @@ export function traceWallsFromImageData(
 }
 
 function inkMask(image: TraceImageData): Uint8Array {
-  const { data, width, height } = image
-  const total = width * height
-  const gray = new Uint8Array(total)
-  let sum = 0
-  for (let i = 0; i < total; i++) {
-    const o = i * 4
-    const g = 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]
-    gray[i] = g
-    sum += g
-  }
-  const mean = sum / total
-  const invert = mean < 128
-  const threshold = otsu(gray)
-  const mask = new Uint8Array(total)
-  for (let i = 0; i < total; i++) {
-    const cut = invert ? Math.min(threshold, 220) : Math.max(threshold, 16)
-    const ink = invert ? gray[i] >= cut : gray[i] <= cut
-    mask[i] = ink ? 1 : 0
-  }
-  return mask
-}
-
-function otsu(gray: Uint8Array): number {
-  const hist = new Array<number>(256).fill(0)
-  for (let i = 0; i < gray.length; i++) {
-    hist[gray[i]]++
-  }
-  const total = gray.length
-  let sum = 0
-  for (let i = 0; i < 256; i++) {
-    sum += i * hist[i]
-  }
-  let sumB = 0
-  let wB = 0
-  let max = 0
-  let threshold = 128
-  for (let t = 0; t < 256; t++) {
-    wB += hist[t]
-    if (wB === 0) {
-      continue
-    }
-    const wF = total - wB
-    if (wF === 0) {
-      break
-    }
-    sumB += t * hist[t]
-    const mB = sumB / wB
-    const mF = (sum - sumB) / wF
-    const between = wB * wF * (mB - mF) * (mB - mF)
-    if (between >= max) {
-      max = between
-      threshold = t
-    }
-  }
-  return threshold
+  return cadInkMask(image)
 }
 
 function openMask(mask: Uint8Array, w: number, h: number, radius: number): void {

@@ -1,3 +1,4 @@
+import { cadInkMask } from './cad-ink'
 import { rasterizeImage, traceWallsFromImage, type TraceImageData } from './trace-walls'
 import { segmentLength, traceBBox } from './build-floorplan'
 import type { PixelSegment, WallTrace } from './types'
@@ -218,8 +219,12 @@ export function complementThickInkWalls(
     if (!isThickBearingInk(seg, ink, image.width, image.height)) continue
     const len = segmentLength(seg)
     const lJog = isShortBearingJog(seg, ai.segments, minDim)
-    if (!lJog && len < longMin) continue
-    if (!lJog && !nearEndpoint(seg, ai.segments, joinDist)) continue
+    const filled = isFilledBearingInk(seg, ink, image.width, image.height)
+    if (!lJog && !filled && len < longMin) continue
+    if (!lJog && !filled && !nearEndpoint(seg, ai.segments, joinDist)) continue
+    if (filled && !nearAny(seg, ai.segments, joinDist * 1.8) && !nearEndpoint(seg, ai.segments, joinDist)) {
+      continue
+    }
     extra.push(seg)
   }
   if (extra.length === 0) return ai
@@ -385,42 +390,133 @@ export function dropThinDimensionWallsFromImage(trace: WallTrace, image: HTMLIma
   }
 }
 
-/** Drop inner walls that sit on a single thin ink ridge (dimension / 开间 ticks). Keep thick or double-line walls. */
+/**
+ * Drop dimension / 开间 ticks. Outer envelope is not exempt:
+ * the printed size chain around the sheet is often stored as outerLoop.
+ */
 export function dropThinDimensionWalls(trace: WallTrace, image: TraceImageData): WallTrace {
   const outerCount = Math.min(trace.outerCount ?? 0, trace.segments.length)
-  const outer = trace.segments.slice(0, outerCount)
-  const inner = trace.segments.slice(outerCount)
-  if (inner.length === 0) return trace
-  const ink = inkMask(image)
-  const keptInner = inner.filter((seg) => !isThinAnnotation(seg, ink, image.width, image.height))
-  if (keptInner.length === inner.length) return trace
-  const segments = [...outer, ...keptInner]
+  if (trace.segments.length === 0) return trace
+  const ink = cadInkMask(image)
+  const body = thickInkBounds(ink, image.width, image.height)
+  const kept: PixelSegment[] = []
+  let keptOuter = 0
+  for (let i = 0; i < trace.segments.length; i++) {
+    const seg = trace.segments[i]
+    const isOuter = i < outerCount
+    if (shouldDropAsDimension(seg, ink, image.width, image.height, isOuter, body)) continue
+    kept.push(seg)
+    if (isOuter) keptOuter += 1
+  }
+  if (kept.length === trace.segments.length) return trace
   return {
     ...trace,
-    segments,
-    bbox: traceBBox(segments),
-    outerCount
+    segments: kept,
+    bbox: traceBBox(kept),
+    outerCount: keptOuter
   }
 }
 
 function inkMask(image: TraceImageData): Uint8Array {
-  const { data, width, height } = image
-  const total = width * height
-  let sum = 0
-  const gray = new Uint8Array(total)
-  for (let i = 0; i < total; i++) {
-    const o = i * 4
-    const g = 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]
-    gray[i] = g
-    sum += g
+  return cadInkMask(image)
+}
+
+function shouldDropAsDimension(
+  seg: PixelSegment,
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  isOuter: boolean,
+  body: { minX: number; minY: number; maxX: number; maxY: number } | null
+): boolean {
+  if (isThinAnnotation(seg, mask, width, height)) return true
+  const len = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1)
+  if (len < 28) return false
+  const support = segmentInkSupport(seg, mask, width, height)
+  if (support >= 0.25) return false
+  if (isNearImageMargin(seg, width, height)) return true
+  if (body && !pointInPaddedBox((seg.x1 + seg.x2) / 2, (seg.y1 + seg.y2) / 2, body, 0.03, width, height)) {
+    return isOuter || support < 0.15
   }
-  const invert = sum / total < 128
-  const cut = invert ? 200 : 90
-  const mask = new Uint8Array(total)
-  for (let i = 0; i < total; i++) {
-    mask[i] = (invert ? gray[i] >= cut : gray[i] <= cut) ? 1 : 0
+  return false
+}
+
+function isNearImageMargin(seg: PixelSegment, width: number, height: number): boolean {
+  const padX = width * 0.045
+  const padY = height * 0.045
+  const mx = (seg.x1 + seg.x2) / 2
+  const my = (seg.y1 + seg.y2) / 2
+  return mx <= padX || mx >= width - padX || my <= padY || my >= height - padY
+}
+
+function thickInkBounds(
+  mask: Uint8Array,
+  width: number,
+  height: number
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = width
+  let minY = height
+  let maxX = 0
+  let maxY = 0
+  const step = 3
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      if (!mask[y * width + x]) continue
+      let thick = 0
+      for (let d = -5; d <= 5; d++) {
+        const yy = y + d
+        if (yy >= 0 && yy < height && mask[yy * width + x]) thick += 1
+      }
+      if (thick < 4) continue
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x)
+      maxY = Math.max(maxY, y)
+    }
   }
-  return mask
+  if (maxX <= minX || maxY <= minY) return null
+  return { minX, minY, maxX, maxY }
+}
+
+function pointInPaddedBox(
+  x: number,
+  y: number,
+  box: { minX: number; minY: number; maxX: number; maxY: number },
+  pad: number,
+  width: number,
+  height: number
+): boolean {
+  const dx = Math.max(8, (box.maxX - box.minX) * pad)
+  const dy = Math.max(8, (box.maxY - box.minY) * pad)
+  return (
+    x >= Math.max(0, box.minX - dx) &&
+    x <= Math.min(width, box.maxX + dx) &&
+    y >= Math.max(0, box.minY - dy) &&
+    y <= Math.min(height, box.maxY + dy)
+  )
+}
+
+function isFilledBearingInk(
+  seg: PixelSegment,
+  mask: Uint8Array,
+  width: number,
+  height: number
+): boolean {
+  if (isThinAnnotation(seg, mask, width, height)) return false
+  const dx = seg.x2 - seg.x1
+  const dy = seg.y2 - seg.y1
+  const len = Math.hypot(dx, dy)
+  if (len < 12) return false
+  const px = len > 1e-6 ? -dy / len : 0
+  const py = len > 1e-6 ? dx / len : 1
+  let filled = 0
+  const samples = Math.max(3, Math.min(7, Math.round(len / 12)))
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples
+    const profile = perpProfile(seg.x1 + dx * t, seg.y1 + dy * t, px, py, mask, width, height, 14)
+    if (profile.width >= 7 || profile.runs >= 3) filled += 1
+  }
+  return filled >= Math.max(1, Math.ceil((samples - 1) * 0.5))
 }
 
 function isThinAnnotation(seg: PixelSegment, mask: Uint8Array, width: number, height: number): boolean {

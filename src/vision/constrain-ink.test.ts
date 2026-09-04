@@ -244,4 +244,82 @@ assert.ok(
   'thin dimension tick is not added'
 )
 
+function sheetWithOuterDim(): TraceImageData {
+  const width = 120
+  const height = 80
+  const data = new Uint8ClampedArray(width * height * 4)
+  data.fill(255)
+  const ink = (x: number, y: number) => {
+    const o = (y * width + x) * 4
+    data[o] = data[o + 1] = data[o + 2] = 0
+  }
+  for (let x = 20; x <= 100; x++) {
+    for (let y = 24; y <= 30; y++) ink(x, y)
+  }
+  for (let x = 4; x <= 116; x++) ink(x, 3)
+  return { data, width, height }
+}
+
+const outerDim = dropThinDimensionWalls(
+  {
+    segments: [
+      { x1: 4, y1: 3, x2: 116, y2: 3 },
+      { x1: 20, y1: 27, x2: 100, y2: 27 }
+    ],
+    bbox: traceBBox([]),
+    imageWidth: 120,
+    imageHeight: 80,
+    outerCount: 1
+  },
+  sheetWithOuterDim()
+)
+assert.equal(outerDim.segments.length, 1, 'outer dimension chain is dropped')
+assert.ok(Math.abs(outerDim.segments[0].y1 - 27) < 2, 'thick building wall kept')
+
+function darkFilled(): TraceImageData {
+  const width = 140
+  const height = 80
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < width * height; i++) {
+    const o = i * 4
+    data[o] = data[o + 1] = data[o + 2] = 10
+    data[o + 3] = 255
+  }
+  const ink = (x: number, y: number, v = 140) => {
+    const o = (y * width + x) * 4
+    data[o] = data[o + 1] = data[o + 2] = v
+  }
+  for (let y = 10; y <= 70; y++) {
+    for (let x = 40; x <= 48; x++) ink(x, y, 220)
+  }
+  for (let y = 28; y <= 52; y++) {
+    for (let x = 50; x <= 66; x++) ink(x, y, 130)
+  }
+  return { data, width, height }
+}
+
+const filled = complementThickInkWalls(
+  {
+    segments: [{ x1: 44, y1: 10, x2: 44, y2: 70 }],
+    bbox: traceBBox([]),
+    imageWidth: 140,
+    imageHeight: 80,
+    outerCount: 0
+  },
+  {
+    segments: [
+      { x1: 44, y1: 10, x2: 44, y2: 70 },
+      { x1: 58, y1: 28, x2: 58, y2: 52 }
+    ],
+    bbox: traceBBox([]),
+    imageWidth: 140,
+    imageHeight: 80
+  },
+  darkFilled()
+)
+assert.ok(
+  filled.segments.some((s) => Math.abs(s.x1 - 58) < 4),
+  'gray filled bearing next to a wall is added'
+)
+
 console.log('constrain-ink.test ok')

@@ -99,6 +99,16 @@ export function judgeAiWallsPayload(
       code: 'outer-count',
       message: `外墙 ${outer.length} 个点`
     })
+    const margin = outer.filter(
+      (p) => p.x <= w * 0.04 || p.x >= w * 0.96 || p.y <= h * 0.04 || p.y >= h * 0.96
+    ).length
+    if (margin >= 3) {
+      notes.push({
+        severity: 'warn',
+        code: 'outer-on-margin',
+        message: '外墙有多点贴着图边，多半描了四周的尺寸链而不是建筑外皮'
+      })
+    }
   }
 
   if (outer.length >= 3) {
